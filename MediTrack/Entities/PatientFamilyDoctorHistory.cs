@@ -7,6 +7,8 @@
         public int? FamilyDoctorId { get; set; } //int normalde nullable olmadığı için buraya null! değeri atamaya gerek yok. Ama eğer nullable olmasını istiyorsak int? yapabiliriz.
         public int PatientId { get; set; } //int normalde nullable olmadığı için buraya null! değeri atamaya gerek yok. Ama eğer nullable olmasını istiyorsak int? yapabiliriz.
 
+        public Doctor FamilyDoctor { get; set; } = null!; //null olabilir eğer null ise derleme zamanında uyarı vermez ama
+
         public Patient Patient { get; set; } = null!; //null olabilir eğer null ise derleme zamanında uyarı vermez ama
 
         public DateTime AssignedAt { get; set; }=DateTime.Now; //Atandığı tarih otomatik olarak atanacak şekilde ayarlanabilir.

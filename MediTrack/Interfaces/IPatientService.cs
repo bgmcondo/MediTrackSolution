@@ -13,5 +13,9 @@ namespace MediTrack.Interfaces
 
 
         public Task<Patient> DeletePatientAsync( int patientId);
+
+        public Task<Medication> GetPatientMedicationsAsync(int patientId);
+
+
     }
 }
