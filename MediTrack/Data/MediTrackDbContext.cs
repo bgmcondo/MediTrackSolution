@@ -24,6 +24,11 @@ namespace MediTrack.Data
 
         public DbSet<Medication> Medications { get; set; }
 
+        public DbSet<AppointmentMedication> AppointmentMedications { get; set; }
+
+        public DbSet<PatientFamilyDoctorHistory> patientFamilyDoctorHistories { get; set; }
+
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Identity'nin kullanıcı, rol ve diğer tablo

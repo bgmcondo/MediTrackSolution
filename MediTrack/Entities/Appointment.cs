@@ -3,9 +3,9 @@
 
     public enum AppointmentStatus
     {
-        Pending = 0,
-        Approved = 1,
-        Rejected = 2,
+        Scheduled = 0,  // Randevu alındı, aktif
+        Cancelled = 1,  // İptal edildi
+        Completed = 2   // Randevu gerçekleşti
     }
     public class Appointment
     {

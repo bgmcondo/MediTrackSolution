@@ -9,10 +9,6 @@ namespace MediTrack.Dtos.AppointmentDto
         // Güncellenecek randevunun Id bilgisi URL üzerinden alınır.
         // Örnek: PUT /api/appointments/10
 
-        // PatientId EKLEMEDİK:
-        // Hasta kendi randevusunu güncelliyor.
-        // Doktor veya tarih değişse bile randevunun sahibi değişmez.
-        // Ayrıca kullanıcının bu randevuya erişim yetkisi kontrol edilmelidir.
 
         // DoctorId:
         // Hasta randevu aldığı doktoru değiştirmek isteyebilir.
@@ -21,6 +17,7 @@ namespace MediTrack.Dtos.AppointmentDto
 
 
         public int DoctorId { get; set; }
+        public int PatientId { get; set; }
 
         // AppointmentDate:
         // Hasta randevusunun tarihini veya saatini değiştirebilir.

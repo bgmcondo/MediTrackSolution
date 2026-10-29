@@ -15,7 +15,9 @@ namespace MediTrack.Dtos.FamilyDoctorDto
         public string PatientFullName { get; set; } = string.Empty;
 
         // Hastaya atanmış aile hekiminin ID bilgisi.
-        public int DoctorId { get; set; }
+        public int? FamilyDoctorId { get; set; }
+
+
 
         // Aile hekiminin adı ve soyadı birleştirilerek gösterilir.
         // Service katmanında hesaplanır.

@@ -22,7 +22,6 @@ namespace MediTrack.Dtos.AppointmentDto
 
 
 
-        public string AppointmentType { get; set; } =string.Empty;
 
     }
 }

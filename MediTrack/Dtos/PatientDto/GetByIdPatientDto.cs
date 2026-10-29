@@ -17,6 +17,7 @@ namespace MediTrack.Dtos.PatientDto
 
         public int CurrentFamilyDoctorId { get; set; } // Eğer Id'yi vermeseydik yine de CurrentFamilyDoctor üzerinden erişebilirdik. Ama bu şekilde daha hızlı erişim sağlanır.
 
+        public required string CurrentFamilyDoctorName { get; set; }
         // null! başlangıçta null atanmasını sağlar, ancak derleyicinin
         // null uyarısını bastırır. Değerin null olmayacağını garanti etmez.
         //Çalışma zamanı: Değer hâlâ null olabilir ve NullReferenceException oluşabilir
@@ -24,6 +25,6 @@ namespace MediTrack.Dtos.PatientDto
 
 
 
- 
+
     }
 }

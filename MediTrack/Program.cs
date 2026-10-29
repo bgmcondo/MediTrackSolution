@@ -78,7 +78,6 @@ builder.Services.AddAuthentication(options =>
 
 
 builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IAppointmentMedicationService, AppointmentMedicationService>();
 builder.Services.AddScoped<IAppointmentService, AppointmentService>();
 builder.Services.AddScoped<IDoctorService,DoctorService>();
 builder.Services.AddScoped<IFamilyDoctorService, FamilyDoctorService>();
