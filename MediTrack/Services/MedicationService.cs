@@ -16,26 +16,31 @@ namespace MediTrack.Services
 
             
         }
-        public async Task<CreateMedicationDto> CreateMedicationAsync(CreateMedicationDto createMedicationDto)
+        public async Task<GetByIdMedicationDto> CreateMedicationAsync(CreateMedicationDto createMedicationDto)
         {
             //eklenecekler listesine koy henüz veritabanına yazılmadı
             var isSameBarcode=await _context.Medications.AnyAsync(e=>e.Barcode==createMedicationDto.Barcode);
             if (isSameBarcode) 
                 throw new InvalidOperationException("Bu barkodla kayıtlı bir ilaç zaten var.");
-
-                var medication =new Medication  //OBJECT İNİTİALİZER
+            // 1. Entity oluştur
+            var medication = new Medication
             {
                 Name = createMedicationDto.Name,
-                Barcode=createMedicationDto.Barcode,
-                Description=createMedicationDto.Description,
-              
-
+                Barcode = createMedicationDto.Barcode,
+                Description = createMedicationDto.Description
             };
             _context.Medications.Add(medication);   
             
             //Veritabanına yaz
             await _context.SaveChangesAsync();
-            return createMedicationDto;
+            return new GetByIdMedicationDto
+            {
+                Id =medication.Id,
+                Name=medication.Name,
+                Barcode=medication.Barcode,
+                Description=medication.Description,
+            };
+
       
         }
 
@@ -146,7 +151,7 @@ namespace MediTrack.Services
         {
             var patientExists = await _context.Patients.AnyAsync(e=>e.Id==patientId);
             if (!patientExists)
-                throw new KeyNotFoundException();
+                throw new KeyNotFoundException($"{patientId} id'li hasta bulunamadı");
            // 2) Bu hastanın randevularına yazılmış ilaç kayıtlarını, ilaç bilgisiyle birlikte getir
             var appointmentMedicationsEntity=await _context.AppointmentMedications.Include(e=>e.Medication).Where(e=>e.Appointment.PatientId==patientId).ToListAsync();
            
@@ -181,6 +186,7 @@ namespace MediTrack.Services
 
 
         }
+
 
 
     }

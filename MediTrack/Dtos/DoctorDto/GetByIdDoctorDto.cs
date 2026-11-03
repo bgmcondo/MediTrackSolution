@@ -1,4 +1,6 @@
-﻿namespace MediTrack.Dtos.DoctorDto
+﻿using MediTrack.Enums;
+
+namespace MediTrack.Dtos.DoctorDto
 {
     public class GetByIdDoctorDto
     {
@@ -8,5 +10,7 @@
         public string Branch { get; set; } = null!;
         public string Title { get; set; } = null!;
         public bool IsFamilyDoctor { get; set; }
+        public DoctorStatus Status { get; set; }
+
     }
 }

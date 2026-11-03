@@ -1,7 +1,7 @@
 ﻿using MediTrack.Data;
 using MediTrack.Dtos.PatientDto;
 using MediTrack.Interfaces;
-using Microsoft.AspNetCore.HttpLogging;
+
 using Microsoft.EntityFrameworkCore;
 
 namespace MediTrack.Services
@@ -15,7 +15,7 @@ namespace MediTrack.Services
         }
         public  async Task<List<GetByIdPatientDto>> GetAllPatientsAsync()
         {
-            var patientEntityList=await _context.Patients.AsNoTracking().OrderBy(e=>e.FirstName).ThenBy(e=>e.LastName).ToListAsync();
+            var patientEntityList=await _context.Patients.AsNoTracking().Include(p=>p.CurrentFamilyDoctor).OrderBy(e=>e.FirstName).ThenBy(e=>e.LastName).ToListAsync();
             var  patientList=new List<GetByIdPatientDto>();
 
             foreach (var patient in patientEntityList)
@@ -26,8 +26,8 @@ namespace MediTrack.Services
                     LastName = patient.LastName,
                     NationalId = patient.NationalId,
                     CurrentFamilyDoctorId = patient.CurrentFamilyDoctorId,
-                    CurrentFamilyDoctorName = patient.FirstName
-                 + " " + patient.LastName
+                    CurrentFamilyDoctorName = patient.CurrentFamilyDoctor != null ? patient.CurrentFamilyDoctor.FirstName + " " + patient.CurrentFamilyDoctor.LastName : null   
+                
                 });
            
             return patientList;
@@ -47,10 +47,10 @@ namespace MediTrack.Services
                 LastName = patientEntity.LastName,
                 NationalId = patientEntity.NationalId,
                 CurrentFamilyDoctorId = patientEntity.CurrentFamilyDoctorId,
-                CurrentFamilyDoctorName = patientEntity.FirstName + " " + patientEntity.LastName
+                CurrentFamilyDoctorName = patientEntity.CurrentFamilyDoctor != null ? patientEntity.CurrentFamilyDoctor.FirstName + " " + patientEntity.CurrentFamilyDoctor.LastName : null
 
 
-               
+
 
 
             };

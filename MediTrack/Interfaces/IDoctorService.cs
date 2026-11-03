@@ -1,5 +1,6 @@
 ﻿using MediTrack.Dtos.DoctorDto;
 using MediTrack.Entities;
+using MediTrack.Enums;
 
 namespace MediTrack.Interfaces
 {
@@ -13,7 +14,7 @@ namespace MediTrack.Interfaces
 
 
 
-        Task<bool> DeleteDoctorAsync(int doctorId); // Belirli bir doktoru silmek için kullanılacak. // Sadece Admin tarafından kullanılabilir.
+        Task <DoctorStatus> DeleteDoctorAsync(int doctorId); // Belirli bir doktoru silmek için kullanılacak. // Sadece Admin tarafından kullanılabilir.
 
         Task<UpdateDoctorDto> UpdateDoctorAsync(int doctorId, UpdateDoctorDto updateDoctorDto); // Belirli bir doktorun bilgilerini güncellemek için kullanılacak. // Sadece Admin tarafından kullanılabilir.
 

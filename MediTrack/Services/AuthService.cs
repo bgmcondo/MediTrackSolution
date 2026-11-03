@@ -2,16 +2,16 @@
 using MediTrack.Dtos.AuthDto;
 using MediTrack.Entities;
 using MediTrack.Interfaces;
-using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Authorization;
+
 using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
-using System.Reflection.PortableExecutable;
-using System.Runtime.ConstrainedExecution;
+
 using System.Security.Claims;
 using System.Text;
+using System.Transactions;
 
 namespace MediTrack.Services
 {
@@ -38,28 +38,16 @@ namespace MediTrack.Services
             var user=await _userManager.FindByEmailAsync(loginDto.Email);
 
             // 2. Kullanıcı yoksa -> IsSuccess = false, "Email veya şifre hatalı" döndür
-            if (user == null)
+            if (user == null|| await _userManager.IsLockedOutAsync(user) || !await _userManager.CheckPasswordAsync(user, loginDto.Password))
           
                 return new LoginResponseDto
                 {
                     IsSuccess = false,
-                    Message = "Bu email kayıtlı değil",
-                   Email = loginDto.Email,
-                };
+                    Message = "Email veya şifre hatalı"
+               };
 
             
-            // 3. Şifreyi kontrol et (CheckPasswordAsync)
-            var isPasswordValid=await _userManager.CheckPasswordAsync(user, loginDto.Password);
-
-            // 4. Şifre yanlışsa -> yine aynı genel hata mesajını döndür (hangisinin yanlış olduğunu söyleme)
-            if (!isPasswordValid)
-                return new LoginResponseDto
-                {
-                    IsSuccess=false,
-                    Message="Email veya şifre hatalı",
-                  
-                   
-                };
+        
             // 5. Kullanıcının rollerini al (GetRolesAsync)
             var roles = await _userManager.GetRolesAsync(user);
             // 6. (İleride) JWT token üret
@@ -76,7 +64,11 @@ namespace MediTrack.Services
                 claims.Add(new Claim(ClaimTypes.Role, role));
 
             //İmza Program.cs'teki JWT key kullanılmalı
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["jwt:key"]));
+           
+
+            var jwtKey = _configuration["Jwt:Key"]
+            ?? throw new InvalidOperationException("Jwt:Key ayarı bulunamadı.");
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
             var credentials=new SigningCredentials(key,SecurityAlgorithms.HmacSha256);
 
             // Geçerlilik süresi
@@ -110,6 +102,8 @@ namespace MediTrack.Services
             };
         }
 
+  
+
         public async Task<RegisterResponseDto> RegisterAdminAsync(RegisterAdminDto registerAdminDto)
         {
             // 1. Email ile kullanıcı var mı kontrol et
@@ -122,23 +116,68 @@ namespace MediTrack.Services
 
 
                     IsSuccess = false,
-                    Email=existingUser.Email!,
-
                     Message = "Kayıt Başarısız",
                     Errors = new List<string> { "Bu email zaten kayıtlı" }
 
                 };
+            // 3. Transaction başlat
+            await using var transaction = await _context.Database.BeginTransactionAsync();
 
-            
             // 3. Yeni IdentityUser oluştur: UserName ve Email ver
+            var newUser = new IdentityUser {UserName=registerAdminDto.Email, 
+                   Email=registerAdminDto.Email };
             //    - PasswordHash'i ELLE ATAMA, Identity kendisi hash'ler
             //    - UserName'de boşluk olmasın (Identity varsayılan olarak izin vermez), Email'i kullanabilirsin
             // 4. CreateAsync(user, password) ile kaydet
+            var  result=await _userManager.CreateAsync(newUser,registerAdminDto.Password); //otomatik SaveChangesAsync çağırır, DbContext'e ekler ve veritabanına yazar
+
             // 5. result.Succeeded false ise -> hataları döndür
+            if (!result.Succeeded)
+                 return new RegisterResponseDto{
+                     IsSuccess = false,
+                     Errors = result.Errors.Select(e => e.Description).ToList(),
+                     Message = "Kayıt Başarısız"
+
+
+                 };
+
             // 6. "Admin" rolü yoksa oluştur (RoleExistsAsync / CreateAsync)
+            var adminExists = await _roleManager.RoleExistsAsync("Admin");
+            if(!adminExists)
+                 await _roleManager.CreateAsync(new IdentityRole("Admin")); // BU DA OTAMATİK SAVECHANGESASYNC ÇAĞIRIR, DBCONTEXT'E EKLER VE VERİTABANINA YAZAR
+
             // 7. Kullanıcıyı "Admin" rolüne ekle (AddToRoleAsync)
+            var roleResult=await _userManager.AddToRoleAsync(newUser,"Admin"); //BU DA OTAMATİK SAVECHANGESASYNC ÇAĞIRIR, DBCONTEXT'E EKLER VE VERİTABANINA YAZAR
             // 8. Rol ekleme başarısızsa -> kullanıcıyı sil, hataları döndür
+            if (!roleResult.Succeeded)
+            {
+                await _userManager.DeleteAsync(newUser);
+                return new RegisterResponseDto
+                {
+                    IsSuccess = false,
+                    Errors = roleResult.Errors.Select(e => e.Description).ToList(),
+                    Message = "Kayıt Başarısız"
+
+
+                };
+
+            }
+
+
+            // 7. Her şey başarılı -> kalıcı yap
+            await transaction.CommitAsync();  //CommitAsync() çağırmazsan transaction rollback olur ve hiçbir değişiklik veritabanına yazılmaz 
             // 9. Başarılı RegisterResponseDto döndür
+
+            return new RegisterResponseDto {
+                IsSuccess = true,
+                UserId = newUser.Id,
+                Email = newUser.Email!,
+                Role = "Admin",
+                Errors = new List<string>(),
+             Message = "Admin kaydı başarıyla oluşturuldu."
+
+
+         };
         }
 
         public async Task<RegisterResponseDto> RegisterDoctorAsync(RegisterDoctorDto registerDoctorDto)
@@ -151,27 +190,33 @@ namespace MediTrack.Services
                 {
      
                     IsSuccess=false,
-                    Errors = new List<string> { "Bu email adresi zaten kayıtlı." }
+                    Errors = new List<string> { "Bu email adresi zaten kayıtlı." },
+                    Message = "Kayıt Başarısız"
 
 
                 };
-                // 3. Yeni IdentityUser oluştur (UserName, Email)
-                var newUser = new IdentityUser
+
+
+            // 3. Transaction başlat: bundan sonraki yazmalar Commit'e kadar kesinleşmez // birden fazla işlemi tek bir paket haline getirir
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            // 3. Yeni IdentityUser oluştur (UserName, Email)
+            var newUser = new IdentityUser
                 {
                     UserName = registerDoctorDto.Email,
                     Email = registerDoctorDto.Email,
 
                 };
                 // 4. CreateAsync(user, password) ile kaydet
-                var result = await _userManager.CreateAsync(newUser, registerDoctorDto.Password);
+                var result = await _userManager.CreateAsync(newUser, registerDoctorDto.Password); //otomatik SaveChangesAsync çağırır, DbContext'e ekler ve veritabanına yazar
 
-                // 5. result.Succeeded false ise -> hataları döndür
-                if (!result.Succeeded)
+            // 5. result.Succeeded false ise -> hataları döndür
+            if (!result.Succeeded)
                 
                     return new RegisterResponseDto
                     {
                         IsSuccess = false,
-                        Errors = result.Errors.Select(e => e.Description).ToList()
+                        Errors = result.Errors.Select(e => e.Description).ToList(),
+                        Message = "Kayıt Başarısız"
                     };
 
 
@@ -192,12 +237,12 @@ namespace MediTrack.Services
                 // 8. Rol ekleme başarısızsa -> kullanıcıyı sil, hataları döndür
                 if (!roleResult.Succeeded)
                 {
-                    await _userManager.DeleteAsync(newUser);
+               
                 return new RegisterResponseDto
                 {
                     IsSuccess = false,
-                    Errors = roleResult.Errors.Select(e => e.Description).ToList()
-
+                    Errors = roleResult.Errors.Select(e => e.Description).ToList(),
+                    Message = "Kayıt Başarısız"
                 };
                 }
                 // 9. (Varsa) Doctor entity'si oluştur, UserId = newUser.Id ile bağla, DbContext'e ekle ve SaveChangesAsync
@@ -210,9 +255,26 @@ namespace MediTrack.Services
 
 
                 };
+              try {
 
-            _context.Doctors.Add(doctor);
-            await _context.SaveChangesAsync();
+                _context.Doctors.Add(doctor);
+                await _context.SaveChangesAsync();
+
+            }
+
+            catch (DbUpdateException)
+            {
+                return new RegisterResponseDto
+                {
+                    IsSuccess = false,
+                    Message = "Kayıt Başarısız",
+                    Errors = new List<string> { "Doktor kaydı oluşturulamadı." }
+                };
+            }
+
+            // 8. Her şey başarılı -> kalıcı yap
+            await transaction.CommitAsync();
+
 
             // 10. Başarılı RegisterResponseDto döndür (Role = "Doctor")
 
@@ -239,10 +301,14 @@ namespace MediTrack.Services
                 return new RegisterResponseDto
                 {
                     IsSuccess = false,
-                    Errors = new List<string> { "Bu email adresi zaten kayıtlı." }
+                    Errors = new List<string> { "Bu email adresi zaten kayıtlı." },
+                    Message = "Kayıt Başarısız"
 
 
                 };
+
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+
             // 3. Yeni IdentityUser oluştur (UserName, Email)
             var newUser = new IdentityUser
                 {
@@ -263,6 +329,7 @@ namespace MediTrack.Services
                 {
                     IsSuccess = false,
                     Errors =result.Errors.Select(e=>e.Description).ToList(),
+                    Message = "Kayıt Başarısız"
                 };
                 // 6. "Patient" rolü yoksa oluştur
                 var roleExists = await _roleManager.RoleExistsAsync("Patient");
@@ -273,8 +340,16 @@ namespace MediTrack.Services
             }
 
             // 7. Kullanıcıyı "Patient" rolüne ekle, başarısızsa kullanıcıyı sil ve hata döndür
-             await _userManager.AddToRoleAsync(newUser, "Patient");
-
+           var roleResult = await _userManager.AddToRoleAsync(newUser, "Patient");
+            if (!roleResult.Succeeded) 
+                return new RegisterResponseDto{
+                    IsSuccess = false,
+                    Message = "Kayıt Başarısız",
+                    Errors = roleResult.Errors.Select(e => e.Description).ToList()
+                 
+            };
+            
+           
             // 8. Patient entity'si oluştur: UserId = newUser.Id, FirstName, LastName
             var patient = new Patient
             {
@@ -286,11 +361,26 @@ namespace MediTrack.Services
             };
 
             
+            try {
 
-            // 9. DbContext'e ekle ve SaveChangesAsync ile kaydet
-            _context.Patients.Add(patient);   // eklenecekler listesine koy (henüz kaydedilmedi)
-            await _context.SaveChangesAsync(); // veritabanına gerçekten yaz
-            // 10. Başarılı RegisterResponseDto döndür (Role = "Patient")
+                // 9. DbContext'e ekle ve SaveChangesAsync ile kaydet
+                _context.Patients.Add(patient);   // eklenecekler listesine koy (henüz kaydedilmedi)
+                await _context.SaveChangesAsync(); // veritabanına gerçekten yaz
+                                                   // 10. Başarılı RegisterResponseDto döndür (Role = "Patient")
+
+
+            }
+            catch (DbUpdateException)
+            {
+                return new RegisterResponseDto
+                {
+                    IsSuccess = false,
+                    Message = "Kayıt Başarısız",
+                    Errors = new List<string> { "Hasta kaydı oluşturulamadı." }
+                };
+            }
+            await transaction.CommitAsync();
+
 
             return new RegisterResponseDto
             {
@@ -298,7 +388,8 @@ namespace MediTrack.Services
                 UserId = newUser.Id,
                 Email = newUser.Email!,
                 Role = "Patient",
-                Errors = new List<string>()
+                Errors = new List<string>(),
+                Message = "Hasta kaydı başarıyla oluşturuldu."
 
 
             };

@@ -1,4 +1,6 @@
-﻿namespace MediTrack.Entities
+﻿using MediTrack.Enums;
+
+namespace MediTrack.Entities
 {
     public class Doctor
     {
@@ -17,6 +19,8 @@
 
         public ICollection<Patient> Patients { get; set; } =  new List<Patient>(); //Çünkü bir doktorun henüz hiç hastası olmayabilir. Bu durumda koleksiyonun null değil, boş bir liste olması daha güvenlidir.
 
+
+        public DoctorStatus Status { get; set; } = DoctorStatus.Active; //Varsayılan olarak doktor aktif kabul edilir
         public ICollection<Appointment> Appointments { get; set; } = new List<Appointment>();
 
     }

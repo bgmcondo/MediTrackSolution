@@ -13,7 +13,8 @@ namespace MediTrack.Dtos.AppointmentDto
 
         public DateTime AppointmentDate { get; set; }
 
-      
+
+
 
 
 

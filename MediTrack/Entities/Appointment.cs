@@ -1,12 +1,9 @@
-﻿namespace MediTrack.Entities
+﻿using MediTrack.Enums;
+
+namespace MediTrack.Entities
 {
 
-    public enum AppointmentStatus
-    {
-        Scheduled = 0,  // Randevu alındı, aktif
-        Cancelled = 1,  // İptal edildi
-        Completed = 2   // Randevu gerçekleşti
-    }
+
     public class Appointment
     {
         public int Id { get; set; }

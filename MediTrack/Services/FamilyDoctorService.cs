@@ -4,6 +4,7 @@ using MediTrack.Entities;
 using MediTrack.Interfaces;
 using MediTrack.Helpers;
 using Microsoft.EntityFrameworkCore;
+using MediTrack.Enums;
 
 namespace MediTrack.Services
 {
@@ -24,25 +25,26 @@ namespace MediTrack.Services
                 throw new KeyNotFoundException("Hasta bulunamadı");
 
             // Bu id'ye sahip doktor var mı onu kontrol et
-            var doctorExists = await _context.Doctors.AnyAsync(d=>d.Id==newDoctorId);
-            if (!doctorExists)
-                throw new KeyNotFoundException("Doktor bulunamadı");
+            var isFamilyDoctorActive = await _context.Doctors.AnyAsync(d=>d.Id == newDoctorId&&d.Status==DoctorStatus.Active&&d.IsFamilyDoctor==true);
+            if (!isFamilyDoctorActive)
+                throw new KeyNotFoundException("Aile hekimi bulunamadı veya yeni hasta kabul edilemiyor");
             if (patient.CurrentFamilyDoctorId == newDoctorId)
                 throw new InvalidOperationException("Hasta zaten bu doktora kayıtlı");
          // Aktif geçmiş kaydını kapat
           var activeHistory=await _context.patientFamilyDoctorHistories.FirstOrDefaultAsync(h=>h.PatientId==patientId&&h.UnassignedAt==null);
-           if (activeHistory != null) // Eğer aktif geçmiş kaydı null değilse kapat
-                activeHistory.UnassignedAt = DateTime.UtcNow;
+            var now = TimeHelper.NowInTurkey();
+            if (activeHistory != null) // Eğer aktif geçmiş kaydı null değilse kapat
+                activeHistory.UnassignedAt =now; // Türkiye saat diliminde şimdiki zamanı al
             // Yeni geçmiş kaydını aç 
             _context.patientFamilyDoctorHistories.Add(new PatientFamilyDoctorHistory
             {
                 PatientId = patientId,
-                FamilyDoctorId= newDoctorId,
-                AssignedAt=TimeHelper.NowInTurkey()
+                FamilyDoctorId = newDoctorId,
+                AssignedAt = now
             }
-                
-                
-               
+
+
+
                 );
 
             //Hastanın güncel doktorunu değiştir
@@ -54,8 +56,8 @@ namespace MediTrack.Services
         public async  Task<List<GetByIdFamilyDoctorHistoryDto>> GetFamilyDoctorHistoryByFamilyDoctorIdAsync(int familyDoctorId)
         {
            // Doktor mevcut mu kontrol ediyoruz
-           var doctorExists=await _context.Doctors.AnyAsync(d=>d.Id ==familyDoctorId);
-            if (!doctorExists)
+           var isFamilyDoctorActive=await _context.Doctors.AnyAsync(d=>d.Id ==familyDoctorId);
+            if (!isFamilyDoctorActive)
                 throw new KeyNotFoundException("Doktor mevcut değil");
            var familyDoctorHistoriesEntity=await _context.patientFamilyDoctorHistories.Include(p=>p.FamilyDoctor).Where(p=>p.FamilyDoctorId==familyDoctorId).ToListAsync();
            var familyDoctorHistoryList=new List<GetByIdFamilyDoctorHistoryDto>();

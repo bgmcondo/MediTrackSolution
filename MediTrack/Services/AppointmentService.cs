@@ -1,13 +1,12 @@
 ﻿using MediTrack.Data;
 using MediTrack.Dtos.AppointmentDto;
 using MediTrack.Entities;
+using MediTrack.Enums;
 using MediTrack.Helpers;
 using MediTrack.Interfaces;
-using Microsoft.AspNetCore.Http.HttpResults;
+
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
-using System.Threading.Channels;
-using System.Xml.Schema;
+
 // Microsoft.AspNetCore.Identity burada kullanılmıyorsa silebilirsin.
 
 namespace MediTrack.Services
@@ -27,6 +26,19 @@ namespace MediTrack.Services
              
         }
 
+
+        public async Task<bool> IsPatientOwnedByUserAsync(int patientId, string userId)
+        {
+            // Id'si patientId olan hasta, token'daki kullanıcıya mı bağlı?
+            return await _context.Patients
+                .AnyAsync(p => p.Id == patientId && p.ApplicationUserId == userId);
+        }
+
+        public async Task<bool> IsAppointmentOwnedByUserAsync(int appointmentId, string userId)
+        {
+            return await _context.Appointments
+                .AnyAsync(a => a.Id == appointmentId && a.Patient.ApplicationUserId == userId);
+        }
         public async Task CancelAppointmentAsync(int appointmentId)
         {
             // 1) _context.Appointments içinden appointmentId'ye göre randevuyu bul (FindAsync veya FirstOrDefaultAsync).
@@ -46,27 +58,27 @@ namespace MediTrack.Services
                 await _context.SaveChangesAsync();
         }
 
-        public async Task<CreateAppointmentDto> CreateAppointmentAsync(CreateAppointmentDto createAppointmentDto)
+        public async Task<GetByIdAppointmentDto> CreateAppointmentAsync(CreateAppointmentDto createAppointmentDto)
         {
             // 1) DTO'daki PatientId ile hasta var mı kontrol et; yoksa exception fırlat.
-            var isPatient = await _context.Appointments.AnyAsync(e => e.PatientId == createAppointmentDto.PatientId);
+            var isPatient = await _context.Patients.AnyAsync(p=> p.Id == createAppointmentDto.PatientId);
             if (!isPatient)
-                throw new InvalidOperationException("Belirtilen hasta bulunamadı");
+                throw new KeyNotFoundException("Belirtilen hasta bulunamadı");
             // 2) DTO'daki DoctorId ile doktor var mı kontrol et; yoksa exception fırlat.
-            var isDoctor = await _context.Appointments.AnyAsync(e => e.DoctorId == createAppointmentDto.DoctorId);
-            if (!isDoctor)
-                throw new InvalidOperationException("Belirtilen doktor bulunamadı");
+            var isDoctorActive = await _context.Doctors.AnyAsync(d => d.Id == createAppointmentDto.DoctorId && d.Status == DoctorStatus.Active);
+            if (!isDoctorActive)
+                throw new KeyNotFoundException("Belirtilen doktor bulunamadı veya randevu kabul etmiyor");
             // 3) Randevu tarihi geçmişte mi kontrol et; geçmişteyse exception fırlat.
             var appointmentTime = createAppointmentDto.AppointmentDate;
             if (appointmentTime <= TimeHelper.NowInTurkey())
-                throw new InvalidOperationException("Randevu tarihi geçmiştir");
+                throw new ArgumentException("Randevu tarihi geçmiştir");
             // 4) Aynı doktorun aynı tarih/saatte aktif (iptal edilmemiş) başka randevusu var mı kontrol et (AnyAsync);
             //    varsa çakışma olduğu için exception fırlat.
-            var anyAppointmentDoctor = await _context.Doctors.Include(d => d.Appointments).AnyAsync(d => d.Id == createAppointmentDto.DoctorId && d.Appointments.Any(a => a.AppointmentDate == createAppointmentDto.AppointmentDate));
+            var anyAppointmentDoctor = await _context.Appointments.AnyAsync(a => a.DoctorId == createAppointmentDto.DoctorId && a.AppointmentDate == createAppointmentDto.AppointmentDate&& a.AppointmentStatus != AppointmentStatus.Cancelled);
             if (anyAppointmentDoctor)
                 throw new InvalidOperationException("Doktorun bu saatte başka randevusu var.");
             // 5) (İsteğe bağlı) Aynı hastanın aynı saatte başka randevusu var mı kontrol et.
-            var anyAppointmentPatient = await _context.Patients.Include(d => d.Appointments).AnyAsync(p => p.Id == createAppointmentDto.PatientId && p.Appointments.Any(a => a.AppointmentDate == createAppointmentDto.AppointmentDate));
+            var anyAppointmentPatient = await _context.Appointments.AnyAsync(a => a.PatientId == createAppointmentDto.PatientId && a.AppointmentDate == createAppointmentDto.AppointmentDate && a.AppointmentStatus != AppointmentStatus.Cancelled);
             if (anyAppointmentPatient)
                 throw new InvalidOperationException("Bu saatte başka bir randevunuz var");
             // 6) DTO'dan yeni bir Appointment entity'si oluştur (alanları tek tek eşle),
@@ -92,11 +104,13 @@ namespace MediTrack.Services
             // 8) Sonucu DTO olarak dön.
             //    (Öneri: Dönüş tipini GetByIdAppointmentDto yaparsan oluşan Id'yi de dönebilirsin.)
 
-            return new CreateAppointmentDto
+            return new GetByIdAppointmentDto
             {
                 AppointmentDate = appointment.AppointmentDate,
                 DoctorId = appointment.DoctorId,
                 PatientId = appointment.PatientId,
+                Id = appointment.Id,
+                AppointmentStatus = appointment.AppointmentStatus,
 
             };
 
@@ -161,8 +175,8 @@ namespace MediTrack.Services
         public async Task<List<GetByIdAppointmentDto>> GetAppointmentsByDoctorIdAsync(int doctorId)
         {
             // 1) (İsteğe bağlı) Böyle bir doktor var mı kontrol et; yoksa exception fırlat.
-            var doctorExists=await _context.Doctors.AsNoTracking().AnyAsync(d=>d.Id == doctorId);
-            if (!doctorExists)
+            var isDoctorExists=await _context.Doctors.AsNoTracking().AnyAsync(d=>d.Id == doctorId);
+            if (!isDoctorExists)
                 throw new KeyNotFoundException("Bu Id'ye sahip doktor bulunmamaktadır");
             // 2) _context.Appointments içinde DoctorId == doctorId olanları filtrele (Where).
             var appointmentsDoctorEntity = await _context.Appointments.Include(a=>a.Doctor).Include(a=>a.Patient).Where(a=>a.DoctorId == doctorId).OrderByDescending(a=>a.AppointmentDate).AsNoTracking().ToListAsync();
@@ -232,27 +246,30 @@ namespace MediTrack.Services
             // 1) appointmentId ile randevuyu bul (AsNoTracking KULLANMA, çünkü güncelleyeceksin).
              var appointment=await _context.Appointments.FirstOrDefaultAsync(a=>a.Id==appointmentId);
             // 2) Bulunamadıysa exception fırlat.
-            if (appointment == null)
+            if (appointment == null)  //bu gerekli mi sor
                 throw new KeyNotFoundException("Randevu bulunamamıştır");
             // 3) Randevu iptal edilmişse güncellemeye izin verme, exception fırlat.
             if (appointment.AppointmentStatus == AppointmentStatus.Cancelled)
                 throw new InvalidOperationException("İptal edilen randevu güncellenemez.");
             // 4) Yeni tarih geçmişteyse exception fırlat
             if (updateAppointmentDto.AppointmentDate <= TimeHelper.NowInTurkey())
-                throw new InvalidOperationException("Randevu zamanı geçmiştir");
+                throw new ArgumentException("Randevu zamanı geçmiştir");
             //Doktor var mı kontrol 
-            var doctorExists = await _context.Doctors.AnyAsync(e => e.Id == updateAppointmentDto.DoctorId);
-            if (!doctorExists)
-                throw new KeyNotFoundException("Doktor bulunamadı");
+            var isDoctorActive = await _context.Doctors.AnyAsync(d => d.Id == updateAppointmentDto.DoctorId && d.Status == DoctorStatus.Active);
+            if (!isDoctorActive)
+                throw new KeyNotFoundException("Doktor bulunamadı veya randevu kabul etmiyor");
             // 5) Tarih veya doktor değişiyorsa çakışma kontrolü yap:
             var anyAppointmentDoctor = await _context.Appointments.AnyAsync(a => a.DoctorId== updateAppointmentDto.DoctorId &&a.AppointmentDate==updateAppointmentDto.AppointmentDate&&a.Id!=appointmentId&&a.AppointmentStatus!=AppointmentStatus.Cancelled);
             if (anyAppointmentDoctor)
                 throw new InvalidOperationException("Bu saatte doktorun başka randevusu var");
             
-            var anyAppoinmentPatient = await _context.Appointments.AnyAsync(a=>a.PatientId==updateAppointmentDto.PatientId&&a.AppointmentDate==updateAppointmentDto.AppointmentDate&&a.Id!=appointmentId&&a.AppointmentStatus!=AppointmentStatus.Cancelled);
-            //    aynı doktorun o saatte başka aktif randevusu var mı (kendi Id'sini hariç tutarak: a.Id != appointmentId).
+            var anyAppoinmentPatient = await _context.Appointments.AnyAsync(a=>a.PatientId==appointment.PatientId&&a.AppointmentDate==updateAppointmentDto.AppointmentDate&&a.Id!=appointmentId&&a.AppointmentStatus!=AppointmentStatus.Cancelled);
+            //    aynı hastanın o saatte başka aktif randevusu var mı (kendi Id'sini hariç tutarak: a.Id != appointmentId).
+            // ayrıca hasta randevu alımında güncellenebilen bir alan olmadığı için dto'dan değil veritabanından PatientId getriyoruz
+
+          
             if (anyAppoinmentPatient)
-                throw new InvalidOperationException("Bu saatte doktorun başka randevusu var");
+                throw new InvalidOperationException("Bu saatte hastanın başka randevusu var");
             // 6) DTO'daki değerleri entity'nin alanlarına ata.
             appointment.DoctorId=updateAppointmentDto.DoctorId;
             appointment.AppointmentDate=updateAppointmentDto.AppointmentDate;
