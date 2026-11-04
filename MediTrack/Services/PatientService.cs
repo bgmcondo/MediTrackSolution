@@ -1,7 +1,8 @@
-﻿using MediTrack.Data;
+﻿using System.Linq.Expressions;
+using MediTrack.Data;
 using MediTrack.Dtos.PatientDto;
+using MediTrack.Entities;
 using MediTrack.Interfaces;
-
 using Microsoft.EntityFrameworkCore;
 
 namespace MediTrack.Services
@@ -9,77 +10,76 @@ namespace MediTrack.Services
     public class PatientService : IPatientService
     {
         private readonly MediTrackDbContext _context;
-        public PatientService(MediTrackDbContext context) { 
-          _context = context;
-        
-        }
-        public  async Task<List<GetByIdPatientDto>> GetAllPatientsAsync()
-        {
-            var patientEntityList=await _context.Patients.AsNoTracking().Include(p=>p.CurrentFamilyDoctor).OrderBy(e=>e.FirstName).ThenBy(e=>e.LastName).ToListAsync();
-            var  patientList=new List<GetByIdPatientDto>();
+        private readonly IAccessService _access;   // sahiplik/yetki kontrolleri
 
-            foreach (var patient in patientEntityList)
-                patientList.Add(new GetByIdPatientDto
-                {
-                    Id = patient.Id,
-                    FirstName = patient.FirstName,
-                    LastName = patient.LastName,
-                    NationalId = patient.NationalId,
-                    CurrentFamilyDoctorId = patient.CurrentFamilyDoctorId,
-                    CurrentFamilyDoctorName = patient.CurrentFamilyDoctor != null ? patient.CurrentFamilyDoctor.FirstName + " " + patient.CurrentFamilyDoctor.LastName : null   
-                
-                });
-           
-            return patientList;
-            
-         
+        public PatientService(MediTrackDbContext context, IAccessService access)
+        {
+            _context = context;
+            _access = access;
         }
 
-        public  async Task<GetByIdPatientDto> GetPatientByIdAsync(int patientId)
-        {
-            var patientEntity = await _context.Patients.AsNoTracking().Include(e=>e.CurrentFamilyDoctor).FirstOrDefaultAsync(e=>e.Id==patientId);
-            if (patientEntity == null)
-                throw new KeyNotFoundException("Hasta bulunamadı");
-            return new GetByIdPatientDto
+        // Entity -> DTO dönüşümü tek yerde. Select içinde kullanıldığı için SQL'e çevrilir,
+        // Include gerekmez. Hastanın aile hekimi olmayabilir, bu yüzden null kontrolü var.
+        private static readonly Expression<Func<Patient, GetByIdPatientDto>> ToDto =
+            p => new GetByIdPatientDto
             {
-                Id = patientEntity.Id,
-                FirstName = patientEntity.FirstName,
-                LastName = patientEntity.LastName,
-                NationalId = patientEntity.NationalId,
-                CurrentFamilyDoctorId = patientEntity.CurrentFamilyDoctorId,
-                CurrentFamilyDoctorName = patientEntity.CurrentFamilyDoctor != null ? patientEntity.CurrentFamilyDoctor.FirstName + " " + patientEntity.CurrentFamilyDoctor.LastName : null
-
-
-
-
-
+                Id = p.Id,
+                FirstName = p.FirstName,
+                LastName = p.LastName,
+                NationalId = p.NationalId,
+                CurrentFamilyDoctorId = p.CurrentFamilyDoctorId,
+                CurrentFamilyDoctorName = p.CurrentFamilyDoctor != null
+                    ? p.CurrentFamilyDoctor.FirstName + " " + p.CurrentFamilyDoctor.LastName
+                    : null
             };
+
+        // Tüm hastalar (TC kimlik numaraları dahil).
+        // Sahiplik kontrolü yapılamaz (belirli bir hastaya ait değil);
+        // koruma controller'daki [Authorize(Roles = "Admin")] ile sağlanır.
+        public async Task<List<GetByIdPatientDto>> GetAllPatientsAsync()
+        {
+            return await _context.Patients
+                .AsNoTracking()
+                .OrderBy(p => p.FirstName)
+                .ThenBy(p => p.LastName)
+                .Select(ToDto)
+                .ToListAsync();
         }
 
-        public async Task<UpdatePatientDto> UpdatePatientAsync(int patientId, UpdatePatientDto updatePatientDto)
+        // Yetki: hastanın kendisi, ilişkili doktor veya Admin
+        public async Task<GetByIdPatientDto> GetPatientByIdAsync(int patientId)
         {
-            var patientEntity = await _context.Patients.FirstOrDefaultAsync(e => e.Id ==patientId);
-            if(patientEntity == null)
-            {
-                throw new KeyNotFoundException("Hasta bulunamadı");
-            }
-            patientEntity.FirstName= updatePatientDto.FirstName;
-            patientEntity.LastName= updatePatientDto.LastName;
+            await _access.EnsureCanAccessPatientAsync(patientId);
 
-        
+            return await _context.Patients
+                .AsNoTracking()
+                .Where(p => p.Id == patientId)
+                .Select(ToDto)
+                .FirstOrDefaultAsync()
+                ?? throw new KeyNotFoundException("Hasta bulunamadı");
+        }
+
+        // Yetki: hastanın kendisi veya Admin (Doctor rolü controller'da engelleniyor)
+        public async Task<GetByIdPatientDto> UpdatePatientAsync(int patientId, UpdatePatientDto updatePatientDto)
+        {
+            await _access.EnsureCanAccessPatientAsync(patientId);
+
+            // Güncelleneceği için AsNoTracking kullanılmıyor
+            var patient = await _context.Patients.FirstOrDefaultAsync(p => p.Id == patientId)
+                ?? throw new KeyNotFoundException("Hasta bulunamadı");
+
+            patient.FirstName = updatePatientDto.FirstName;
+            patient.LastName = updatePatientDto.LastName;
+
+            // Entity takip edildiği için _context.Update gerekmez
             await _context.SaveChangesAsync();
 
-            return new UpdatePatientDto
-            {
-                FirstName = patientEntity.FirstName,
-                LastName = patientEntity.LastName,
-
-
-            }
-                
-                ;
+            // Güncellenmiş hali (aile hekimi adı dahil) döndür
+            return await _context.Patients
+                .AsNoTracking()
+                .Where(p => p.Id == patientId)
+                .Select(ToDto)
+                .FirstAsync();
         }
-
-
     }
 }

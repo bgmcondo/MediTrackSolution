@@ -16,7 +16,7 @@ namespace MediTrack.Interfaces
 
         Task <DoctorStatus> DeleteDoctorAsync(int doctorId); // Belirli bir doktoru silmek için kullanılacak. // Sadece Admin tarafından kullanılabilir.
 
-        Task<UpdateDoctorDto> UpdateDoctorAsync(int doctorId, UpdateDoctorDto updateDoctorDto); // Belirli bir doktorun bilgilerini güncellemek için kullanılacak. // Sadece Admin tarafından kullanılabilir.
+        Task<GetByIdDoctorDto> UpdateDoctorAsync(int doctorId, UpdateDoctorDto updateDoctorDto); // Belirli bir doktorun bilgilerini güncellemek için kullanılacak. // Sadece Admin tarafından kullanılabilir.
 
 
     }

@@ -57,7 +57,7 @@ namespace MediTrack.Data
                 entity.HasOne(p => p.CurrentFamilyDoctor)
                     .WithMany()
                     .HasForeignKey(p => p.CurrentFamilyDoctorId)
-                    .IsRequired()
+                    .IsRequired(false)
                     .OnDelete(DeleteBehavior.Restrict);
 
                 // Aynı TC kimlik numarasıyla ikinci bir

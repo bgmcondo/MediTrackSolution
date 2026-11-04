@@ -1,254 +1,119 @@
 ﻿using MediTrack.Dtos.AppointmentDto;
-using MediTrack.Entities;
 using MediTrack.Interfaces;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace MediTrack.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize]
+    [Authorize] // giriş yapmamış kimse erişemez (401)
     public class AppointmentsController : ControllerBase
     {
-
         private readonly IAppointmentService _appointmentService;
 
         public AppointmentsController(IAppointmentService appointmentService)
         {
             _appointmentService = appointmentService;
-
         }
 
         // İŞ BÖLÜMÜ:
-        // - Servis: İş kurallarını kontrol eder (hasta var mı, doktor var mı, saat dolu mu).
+        // - Controller ([Authorize]): Bu endpoint'i hangi ROL çağırabilir? (sadece token'a bakar)
+        // - Servis + AccessService: Bu kişi bu KAYDA erişebilir mi? (hasta kendisi mi,
+        //   doktor ilişkili mi?) ve iş kuralları (hasta var mı, saat dolu mu).
         //   Bir sorun bulursa exception fırlatır. HTTP'den (404, 409 vb.) haberi yoktur.
-        // - Controller: Servisin fırlattığı exception'ı yakalar ve istemciye
-        //   uygun HTTP cevabına çevirir.
-        //
-        // Controller'da catch OLMAZSA: Exception yakalanmaz, ASP.NET Core bunu
-        // beklenmeyen hata sayar ve istemci "Hasta bulunamadı" yerine
-        // 500 Internal Server Error alır.
+        // - Execute: Servisin fırlattığı exception'ı yakalar ve uygun HTTP cevabına çevirir.
         //
         // Akış:
-        //   Servis: hasta yok → throw KeyNotFoundException("Hasta bulunamadı")
-        //   Controller catch varsa → 404 { "message": "Hasta bulunamadı" }
-        //   Controller catch yoksa → 500 Internal Server Error
-        //
-        // NOT: Bu catch bloklarını her controller'da tekrar yazmamak için
-        // global exception handler (IExceptionHandler) kullanılabilir.
-        // O zaman bu try-catch'ler silinebilir.
+        //   Servis: yetki yok    → throw UnauthorizedAccessException → 403
+        //   Servis: hasta yok    → throw KeyNotFoundException        → 404
+        //   Servis: saat dolu    → throw InvalidOperationException   → 409
+        //   Servis: geçmiş tarih → throw ArgumentException           → 400
+        //   Yakalanmayan exception → 500 Internal Server Error
+
+        // POST api/appointments
+        // Admin: herhangi bir hasta için, Patient: sadece kendisi için
         [HttpPost]
         [Authorize(Roles = "Admin,Patient")]
-        public async Task<ActionResult<GetByIdAppointmentDto>> Create(CreateAppointmentDto createAppointmentDto)
+        public Task<IActionResult> Create(CreateAppointmentDto createAppointmentDto) => Execute(async () =>
         {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;   // TOKEN DAN USER İD BİLGİSİNİ ALIYORUZ 
-            var isAdmin = User.IsInRole("Admin"); // KİŞİ ADMIN ROLÜNDE Mİ DEĞİL Mİ BUNU KONTROL EDİYORUZ
-            if (!isAdmin && !await _appointmentService.IsPatientOwnedByUserAsync(createAppointmentDto.PatientId, userId))
-                return Forbid(); // 403 Forbidden: Admin değilse ve kendi randevusunu oluşturuyorsa izin ver, yoksa yasakla.)
-            try
-            {
-                var appointment = await _appointmentService.CreateAppointmentAsync(createAppointmentDto);
-                // 201 Created: Yeni kayıt oluşturuldu.
-                // Response header'ına yeni kaydın adresini (Location: api/appointments/{id}) ekler.
-                return CreatedAtAction(
-                nameof(GetById),          // hangi action'a yönlendirilecek
-                new { id = appointment.Id },  // o action'ın route parametreleri   // Anonim tip (yaygın kullanım)
-                 appointment);                 // yanıt gövdesi
-            }
+            var appointment = await _appointmentService.CreateAppointmentAsync(createAppointmentDto);
 
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message }); //404
+            // 201 Created: Response header'ına yeni kaydın adresini (Location: api/appointments/{id}) ekler
+            return CreatedAtAction(
+                nameof(GetById),               // hangi action'a yönlendirilecek
+                new { id = appointment.Id },   // o action'ın route parametreleri
+                appointment);                  // yanıt gövdesi
+        });
 
-            }
-
-            catch (InvalidOperationException ex)
-            {
-                return Conflict(new { message = ex.Message });
-
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });     // 400  //istek verisi hatalı geçmişteki randevu gibi
-            }
-        }
-
-
-
-
+        // GET api/appointments
+        // Tüm randevular: sadece Admin (serviste sahiplik kontrolü yok, koruma bu rolde)
         [HttpGet]
-
         [Authorize(Roles = "Admin")]
+        public Task<IActionResult> GetAll() => Execute(async () =>
+            Ok(await _appointmentService.GetAllAppointmentsAsync()));
 
-        public async Task<ActionResult<List<GetByIdAppointmentDto>>> GetAll()
-        {
-            try
-            {
-                var appointments = await _appointmentService.GetAllAppointmentsAsync();
-                return Ok(appointments);
-            }
-
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message }); //404
-            }
-
-        }
+        // GET api/appointments/patient/12
+        // Hastanın kendisi, ilişkili doktor (aile hekimi veya randevusu olan), Admin
         [HttpGet("patient/{patientId:int:min(1)}")]
-        [Authorize(Roles = "Admin,Doctor,Patient")]
-        public async Task<ActionResult<List<GetByIdAppointmentDto>>> GetAllByPatient(int patientId)
-        {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;   // TOKEN DAN USER İD BİLGİSİNİ ALIYORUZ
-            //Admin ve doctor her hastanın randevusunu görebilir. Patient sadece kendi randevusunu görebilir.
-            if (!User.IsInRole("Admin") && !User.IsInRole("Doctor") && !await _appointmentService.IsPatientOwnedByUserAsync(patientId, userId))
-                return Forbid(); // 403 Forbidden: Admin veya doctor değilse ve bu hasta kendi değilse)
-            try
-            {
-                var appointmentsPatient = await _appointmentService.GetAppointmentsByPatientIdAsync(patientId);
-                return Ok(appointmentsPatient);
-            }
+        public Task<IActionResult> GetAllByPatient(int patientId) => Execute(async () =>
+            Ok(await _appointmentService.GetAppointmentsByPatientIdAsync(patientId)));
 
-            catch (KeyNotFoundException ex)
-            {
-
-                return NotFound(new { message = ex.Message });
-
-            }
-
-
-        }
-
+        // GET api/appointments/doctor/7
+        // Doktorun kendisi, Admin
         [HttpGet("doctor/{doctorId:int:min(1)}")]
         [Authorize(Roles = "Admin,Doctor")]
-        public async Task<ActionResult<List<GetByIdAppointmentDto>>> GetAllByDoctor(int doctorId)
-        {
-            try
-            {
-                var appointmentsDoctor = await _appointmentService.GetAppointmentsByDoctorIdAsync(doctorId);
-                return Ok(appointmentsDoctor);
-            }
+        public Task<IActionResult> GetAllByDoctor(int doctorId) => Execute(async () =>
+            Ok(await _appointmentService.GetAppointmentsByDoctorIdAsync(doctorId)));
 
-
-            catch (KeyNotFoundException ex)
-            {
-
-                return NotFound(new { message = ex.Message });
-
-            }
-
-
-        }
-
+        // GET api/appointments/5
+        // Randevunun hastası, ilişkili doktor, Admin
         [HttpGet("{id:int:min(1)}")]
-        [Authorize(Roles = "Admin,Doctor,Patient")]
-        public async Task<ActionResult<GetByIdAppointmentDto>> GetById(int id)
-        {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;   // TOKEN DAN USER İD BİLGİSİNİ ALIYORUZ
-            //Admin ve doctor her hastanın randevusunu görebilir. Patient sadece kendi randevusunu görebilir.
-            if (!User.IsInRole("Admin") && !User.IsInRole("Doctor") && !await _appointmentService.IsAppointmentOwnedByUserAsync(id, userId))
-                return Forbid(); // 403 Forbidden: Admin veya doctor değilse ve kendi randevusunu görüyorsa izin ver, yoksa yasakla.)
-            try
-            {
-                var appointment = await _appointmentService.GetAppointmentByIdAsync(id);
-                return Ok(appointment);
-            }
+        public Task<IActionResult> GetById(int id) => Execute(async () =>
+            Ok(await _appointmentService.GetAppointmentByIdAsync(id)));
 
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message });
-
-
-            }
-
-        }
-
-
+        // PUT api/appointments/5
+        // Randevunun sahibi olan hasta, Admin
         [HttpPut("{id:int:min(1)}")]
         [Authorize(Roles = "Admin,Patient")]
-        public async Task<ActionResult<UpdateAppointmentDto>> Update(int id, UpdateAppointmentDto updateAppointmentDto)
+        public Task<IActionResult> Update(int id, UpdateAppointmentDto updateAppointmentDto) => Execute(async () =>
+            Ok(await _appointmentService.UpdateAppointmentAsync(id, updateAppointmentDto)));
+
+        // DELETE api/appointments/5
+        // Randevunun sahibi olan hasta, Admin.
+        // Kayıt silinmez, durumu Cancelled yapılır (soft cancel).
+        [HttpDelete("{id:int:min(1)}")]
+        [Authorize(Roles = "Admin,Patient")]
+        public Task<IActionResult> Cancel(int id) => Execute(async () =>
         {
-            // Giriş yapan kullanıcının id'sini token'dan alıp kontrol et. 
-            // Login de token'a nameIdentifier  olarak kullanıcı id'si eklenmişti.
-            //[Authorize] olduğu için 
+            await _appointmentService.CancelAppointmentAsync(id);
+            return NoContent(); // 204
+        });
 
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-            // Kullanıcı admin mi?(Token'da role claim'e bakar)
-            var isAdmin = User.IsInRole("Admin");
-
-            //Sahiplik kontrolü:
-            //Admin her randevuyu değiştirebilir.
-            //Hasta sadece kendi randevusunu değiştirebilir.
-            //    Randevu başkasına aitse (veya hiç yoksa) 403 Forbidden döner.
-            //    Randevu yoksa da 403 dönmesi bilinçli: hasta, başkalarının randevu Id'lerinin
-            //    var olup olmadığını bu yoldan öğrenemesin.
-            if (!isAdmin && !await _appointmentService.IsAppointmentOwnedByUserAsync(id, userId))
-                return Forbid();
+        // Tüm endpoint'lerde aynı try/catch bloğunu tekrar yazmamak için ortak yardımcı.
+        // NOT: Global exception handler (IExceptionHandler) kullanılırsa bu metot da silinebilir.
+        private async Task<IActionResult> Execute(Func<Task<IActionResult>> action)
+        {
             try
             {
-                var appointment = await _appointmentService.UpdateAppointmentAsync(id, updateAppointmentDto);
-
-
-                return appointment;
+                return await action();
             }
-
-            catch (KeyNotFoundException ex)
+            catch (UnauthorizedAccessException ex)   // yetki yok (AccessService)
             {
-                return NotFound(new { message = ex.Message }); //404
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
             }
-
-            catch (ArgumentException ex)
+            catch (KeyNotFoundException ex)           // kayıt bulunamadı
             {
-                return BadRequest(new { message = ex.Message });    // 400
-
+                return NotFound(new { message = ex.Message });
             }
-
-            catch (InvalidOperationException ex)
+            catch (InvalidOperationException ex)      // çakışma, zaten iptal edilmiş vb.
             {
                 return Conflict(new { message = ex.Message });
             }
-        }
-
-
-
-        [HttpDelete("{id:int:min(1)}")]
-        [Authorize(Roles = "Admin,Patient")]
-        public async Task<ActionResult> Cancel(int id)
-        {
-            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;   // TOKEN DAN USER İD BİLGİSİNİ ALIYORUZ
-
-            var isAdmin = User.IsInRole("Admin"); // KİŞİ ADMIN ROLÜNDE Mİ DEĞİL Mİ BUNU KONTROL EDİYORUZ
-
-            //Sahiplik kontrolü:
-            if (!isAdmin && !await _appointmentService.IsAppointmentOwnedByUserAsync(id, userId))
-                return Forbid();
-
-            try
+            catch (ArgumentException ex)              // geçersiz veri (geçmiş tarih vb.)
             {
-                await _appointmentService.CancelAppointmentAsync(id);
-
-                return NoContent();
-
+                return BadRequest(new { message = ex.Message });
             }
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(new { message = ex.Message });
-
-
-            }
-
-            catch (InvalidOperationException ex)
-            {
-                return Conflict(new { message = ex.Message }); //isteğin kaynağın mevcut durumuyla çelişmesi.
-
-            }
-
-
-
-
         }
     }
 }

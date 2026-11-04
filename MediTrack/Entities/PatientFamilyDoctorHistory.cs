@@ -4,7 +4,7 @@
     {
         public  int  Id { get; set; }
 
-        public int? FamilyDoctorId { get; set; } //int normalde nullable olmadığı için buraya null! değeri atamaya gerek yok. Ama eğer nullable olmasını istiyorsak int? yapabiliriz.
+        public int FamilyDoctorId { get; set; } //int normalde nullable olmadığı için buraya null! değeri atamaya gerek yok. Ama eğer nullable olmasını istiyorsak int? yapabiliriz.
         public int PatientId { get; set; } //int normalde nullable olmadığı için buraya null! değeri atamaya gerek yok. Ama eğer nullable olmasını istiyorsak int? yapabiliriz.
 
         public Doctor FamilyDoctor { get; set; } = null!; //null olabilir eğer null ise derleme zamanında uyarı vermez ama

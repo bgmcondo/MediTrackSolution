@@ -24,5 +24,10 @@ namespace MediTrack.Dtos.AuthDto
         public string LastName { get; set; } = null!;
 
         public string Branch{ get; set; } = null!;
+
+
+        public string Title { get; set; } = null!; // Unvan (ör. Uzm. Dr., Doç. Dr.). Doctor entity'sinde zorunlu alan.
+
+        public bool IsFamilyDoctor { get; set; } // Aile hekimi mi? Gönderilmezse false olur.
     }
 }

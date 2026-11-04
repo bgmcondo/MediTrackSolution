@@ -1,14 +1,15 @@
 ﻿using MediTrack.Dtos.MedicationDto;
 using MediTrack.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Linq.Expressions;
 
 namespace MediTrack.Controllers
 {
-    
-    [ApiController] //Otomatik model validation (geçersiz istekte 400 döner), parametre kaynağını otomatik bağlama ve standart hata formatı sağlar
-
-    [Route("api/[controller]")]   // temel adres: api/patients
+    // [ApiController]: Otomatik model doğrulama (geçersiz istekte 400), parametre kaynağını
+    // otomatik bağlama ve standart hata formatı sağlar.
+    [ApiController]
+    [Route("api/[controller]")]   // temel adres: api/medications
+    [Authorize]                   // giriş yapmamış kimse erişemez (401)
     public class MedicationsController : ControllerBase
     {
         private readonly IMedicationService _medicationService;
@@ -18,110 +19,69 @@ namespace MediTrack.Controllers
             _medicationService = medicationService;
         }
 
+        // ---------------- İlaç kataloğu ----------------
 
-
-
-        [HttpGet("{id:int:min(1)}")]
-        public async Task<ActionResult<GetByIdMedicationDto>> GetById(int id)
+        // POST api/medications
+        // Kataloğa yeni ilaç ekleme: sadece Admin
+        [HttpPost]
+        [Authorize(Roles = "Admin")]
+        public Task<IActionResult> Create(CreateMedicationDto createMedicationDto) => Execute(async () =>
         {
-            try
-            {
-                var medication = await _medicationService.GetMedicationByIdAsync(id);
-                return Ok(medication); // 200 + ilaç bilgisi
+            var medication = await _medicationService.CreateMedicationAsync(createMedicationDto);
+            return CreatedAtAction(nameof(GetById), new { id = medication.Id }, medication); // 201
+        });
 
-            }
-
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(ex.Message);
-
-            }
-
-        }
-
-
+        // GET api/medications
+        // Katalog listesi: giriş yapmış herkes (doktor reçete yazarken ilaç seçer)
         [HttpGet]
-        public async Task<ActionResult<List<GetByIdMedicationDto>>> GetAll()
-        {
-         
-                var medication = await _medicationService.GetAllMedicationsAsync();
-                return Ok(medication);
-     
-        }
+        public Task<IActionResult> GetAll() => Execute(async () =>
+            Ok(await _medicationService.GetAllMedicationsAsync()));
 
+        // GET api/medications/5
+        [HttpGet("{id:int:min(1)}")]
+        public Task<IActionResult> GetById(int id) => Execute(async () =>
+            Ok(await _medicationService.GetMedicationByIdAsync(id)));
+
+        // PUT api/medications/5
+        // Katalogdaki ilacı güncelleme: sadece Admin
         [HttpPut("{id:int:min(1)}")]
-        public async Task<ActionResult<UpdateMedicationDto>> Update(int id, UpdateMedicationDto updateMedicationDto)
-        {
+        [Authorize(Roles = "Admin")]
+        public Task<IActionResult> Update(int id, UpdateMedicationDto updateMedicationDto) => Execute(async () =>
+            Ok(await _medicationService.UpdateMedicationAsync(id, updateMedicationDto)));
 
+        // ---------------- Hastanın ilaç geçmişi ----------------
+
+        // GET api/medications/patient/12
+        // TIBBİ VERİ: hastanın kendisi ve ilişkili doktor. Admin bilerek yok.
+        // Rol kontrolü burada, "hasta kendisi mi / doktor ilişkili mi" kontrolü serviste (AccessService).
+        [HttpGet("patient/{patientId:int:min(1)}")]
+        [Authorize(Roles = "Doctor,Patient")]
+        public Task<IActionResult> GetAllByPatientId(int patientId) => Execute(async () =>
+            Ok(await _medicationService.GetPatientMedicationsAsync(patientId)));
+
+        // Tüm endpoint'lerde aynı try/catch bloğunu tekrar yazmamak için ortak yardımcı
+        private async Task<IActionResult> Execute(Func<Task<IActionResult>> action)
+        {
             try
             {
-
-                var medication = await _medicationService.UpdateMedicationAsync(id, updateMedicationDto);
-                return Ok(medication);
+                return await action();
             }
-
-            catch (KeyNotFoundException ex)
+            catch (UnauthorizedAccessException ex)   // yetki yok (AccessService)
             {
-
-                return NotFound(ex.Message);
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
             }
-
-            catch (InvalidOperationException ex)
+            catch (KeyNotFoundException ex)           // kayıt bulunamadı
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)      // aynı barkod zaten var
             {
                 return Conflict(new { message = ex.Message });
             }
+            catch (ArgumentException ex)              // geçersiz veri
+            {
+                return BadRequest(new { message = ex.Message });
+            }
         }
-
-        [HttpGet("patient/{patientId:int:min(1)}")]   
-        public async Task<ActionResult<List<GetByIdMedicationDto>>> GetAllByPatientId(int patientId)
-        {
-            try
-            {
-                var patientMedications = await _medicationService.GetPatientMedicationsAsync(patientId);
-                return Ok(patientMedications);
-            }
-
-            catch (KeyNotFoundException ex)
-            {
-
-                return NotFound(ex.Message);
-
-            }
-
-
-        }
-
-        [HttpPost]
-        public async Task<ActionResult<GetByIdMedicationDto>>Create(CreateMedicationDto createMedicationDto){
-            try
-            {
-                var medication = await _medicationService.CreateMedicationAsync(createMedicationDto);
-                return CreatedAtAction(nameof(GetById), new { id = medication.Id }, medication);
-            }
-
-            catch (KeyNotFoundException ex)
-            {
-                return NotFound(ex.Message);
-
-
-
-            }
-
-
-            catch (InvalidOperationException ex)
-            {
-                return Conflict(new { message = ex.Message }); //barkod zaten var
-
-
-            }
-
     }
-
-
-  
-
-         
-
-
-}
 }

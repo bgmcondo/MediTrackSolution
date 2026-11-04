@@ -1,125 +1,121 @@
 ﻿using MediTrack.Data;
 using MediTrack.Dtos.FamilyDoctorDto;
 using MediTrack.Entities;
-using MediTrack.Interfaces;
-using MediTrack.Helpers;
-using Microsoft.EntityFrameworkCore;
 using MediTrack.Enums;
+using MediTrack.Helpers;
+using MediTrack.Interfaces;
+using Microsoft.EntityFrameworkCore;
 
 namespace MediTrack.Services
 {
     public class FamilyDoctorService : IFamilyDoctorService
     {
         private readonly MediTrackDbContext _context;
+        private readonly IAccessService _access;   // sahiplik/yetki kontrolleri
 
-        public FamilyDoctorService(MediTrackDbContext context)
+        public FamilyDoctorService(MediTrackDbContext context, IAccessService access)
         {
             _context = context;
-             
+            _access = access;
         }
+
+        // Hastanın aile hekimini değiştirir.
+        // Yetki: hastanın kendisi veya Admin (Doctor rolü controller'da engelleniyor)
         public async Task ChangeFamilyDoctorAsync(int patientId, int newDoctorId)
         {
-            var patient = await _context.Patients.FirstOrDefaultAsync(e => e.Id == patientId);
-            
-            if (patient == null)
-                throw new KeyNotFoundException("Hasta bulunamadı");
+            await _access.EnsureCanAccessPatientAsync(patientId);
 
-            // Bu id'ye sahip doktor var mı onu kontrol et
-            var isFamilyDoctorActive = await _context.Doctors.AnyAsync(d=>d.Id == newDoctorId&&d.Status==DoctorStatus.Active&&d.IsFamilyDoctor==true);
-            if (!isFamilyDoctorActive)
-                throw new KeyNotFoundException("Aile hekimi bulunamadı veya yeni hasta kabul edilemiyor");
+            var patient = await _context.Patients.FirstOrDefaultAsync(p => p.Id == patientId)
+                ?? throw new KeyNotFoundException("Hasta bulunamadı");
+
+            // Ucuz kontrol önce: hasta zaten bu doktora kayıtlıysa veritabanına gitmeye gerek yok
             if (patient.CurrentFamilyDoctorId == newDoctorId)
                 throw new InvalidOperationException("Hasta zaten bu doktora kayıtlı");
-         // Aktif geçmiş kaydını kapat
-          var activeHistory=await _context.patientFamilyDoctorHistories.FirstOrDefaultAsync(h=>h.PatientId==patientId&&h.UnassignedAt==null);
+
+            // Doktor aktif ve aile hekimi mi?
+            var isActiveFamilyDoctor = await _context.Doctors.AnyAsync(d =>
+                d.Id == newDoctorId &&
+                d.Status == DoctorStatus.Active &&
+                d.IsFamilyDoctor);
+            if (!isActiveFamilyDoctor)
+                throw new KeyNotFoundException("Aile hekimi bulunamadı veya yeni hasta kabul edemiyor");
+
             var now = TimeHelper.NowInTurkey();
-            if (activeHistory != null) // Eğer aktif geçmiş kaydı null değilse kapat
-                activeHistory.UnassignedAt =now; // Türkiye saat diliminde şimdiki zamanı al
-            // Yeni geçmiş kaydını aç 
+
+            // Açık kalmış geçmiş kaydını kapat (ilk atamada kayıt yoktur, bu adım atlanır)
+            var activeHistory = await _context.patientFamilyDoctorHistories
+                .FirstOrDefaultAsync(h => h.PatientId == patientId && h.UnassignedAt == null);
+            if (activeHistory != null)
+                activeHistory.UnassignedAt = now;
+
+            // Yeni geçmiş kaydını aç
             _context.patientFamilyDoctorHistories.Add(new PatientFamilyDoctorHistory
             {
                 PatientId = patientId,
                 FamilyDoctorId = newDoctorId,
                 AssignedAt = now
-            }
+            });
 
+            // Hastanın güncel doktorunu değiştir
+            patient.CurrentFamilyDoctorId = newDoctorId;
 
-
-                );
-
-            //Hastanın güncel doktorunu değiştir
-            patient.CurrentFamilyDoctorId= newDoctorId;
-
-            //Hepsini veritabanına yaz
+            // Hepsini tek seferde veritabanına yaz
             await _context.SaveChangesAsync();
         }
-        public async  Task<List<GetByIdFamilyDoctorHistoryDto>> GetFamilyDoctorHistoryByFamilyDoctorIdAsync(int familyDoctorId)
+
+        // Bir doktorun aile hekimliği geçmişi (hangi hastalara ne zaman atandığı).
+        // Yetki: doktorun kendisi veya Admin
+        public async Task<List<GetByIdFamilyDoctorHistoryDto>> GetFamilyDoctorHistoryByFamilyDoctorIdAsync(int familyDoctorId)
         {
-           // Doktor mevcut mu kontrol ediyoruz
-           var isFamilyDoctorActive=await _context.Doctors.AnyAsync(d=>d.Id ==familyDoctorId);
-            if (!isFamilyDoctorActive)
-                throw new KeyNotFoundException("Doktor mevcut değil");
-           var familyDoctorHistoriesEntity=await _context.patientFamilyDoctorHistories.Include(p=>p.FamilyDoctor).Where(p=>p.FamilyDoctorId==familyDoctorId).ToListAsync();
-           var familyDoctorHistoryList=new List<GetByIdFamilyDoctorHistoryDto>();
+            await _access.EnsureCanAccessDoctorAsync(familyDoctorId);
 
-            foreach (var familyDoctorHistory in familyDoctorHistoriesEntity)
-                familyDoctorHistoryList.Add(new GetByIdFamilyDoctorHistoryDto
-                {
-                    Id = familyDoctorHistory.Id,
-                    PatientId = familyDoctorHistory.PatientId,
-                    FamilyDoctorId = familyDoctorHistory.FamilyDoctorId,
-                    FamilyDoctorFullName = familyDoctorHistory.FamilyDoctor.FirstName + " " + familyDoctorHistory.FamilyDoctor.LastName,
-                    AssignedAt = familyDoctorHistory.AssignedAt,
-                    UnassignedAt = familyDoctorHistory.UnassignedAt,
+            // IsFamilyDoctor kontrolü BİLEREK yok: artık aile hekimi olmayan
+            // bir doktorun eski geçmişi de görüntülenebilmeli
+            var doctorExists = await _context.Doctors.AnyAsync(d => d.Id == familyDoctorId);
+            if (!doctorExists)
+                throw new KeyNotFoundException("Doktor bulunamadı");
 
+            var histories = await _context.patientFamilyDoctorHistories
+                .AsNoTracking()
+                .Include(h => h.FamilyDoctor)
+                .Where(h => h.FamilyDoctorId == familyDoctorId)
+                .OrderByDescending(h => h.AssignedAt)
+                .ToListAsync();
 
-
-
-
-
-
-
-
-
-                });
-
-
-           return familyDoctorHistoryList;
-                    
+            return histories.Select(ToDto).ToList();
         }
 
+        // Bir hastanın aile hekimi geçmişi.
+        // Yetki: hastanın kendisi, ilişkili doktor veya Admin (idari veri)
         public async Task<List<GetByIdFamilyDoctorHistoryDto>> GetFamilyDoctorHistoryByPatientIdAsync(int patientId)
         {
-            var IsPatientExists = await _context.Patients.FirstOrDefaultAsync(e=>e.Id==patientId);
+            await _access.EnsureCanAccessPatientAsync(patientId);
 
-            // Hasta mevcut mu kontrol
-            if (IsPatientExists == null)
-                throw new KeyNotFoundException("Hasta mevcut değil");
-             
-            var familyDoctorsEntity=await  _context.patientFamilyDoctorHistories.Include(p=>p.FamilyDoctor).Where(p=>p.PatientId==patientId).ToListAsync();
-             
-            var familyDoctorsList=new List<GetByIdFamilyDoctorHistoryDto>();
+            var patientExists = await _context.Patients.AnyAsync(p => p.Id == patientId);
+            if (!patientExists)
+                throw new KeyNotFoundException("Hasta bulunamadı");
 
-            foreach (var familyDoctor in familyDoctorsEntity)
-                familyDoctorsList.Add(new GetByIdFamilyDoctorHistoryDto
-                {
-                    Id = familyDoctor.Id,
-                    PatientId=familyDoctor.PatientId,
-                    FamilyDoctorId = familyDoctor.FamilyDoctorId,
-                    // TODO: FamilyDoctor null olabilir (FamilyDoctorId int? ve doktor silinince SetNull olabilir).
-                    // Ya null kontrolü ekle: FamilyDoctor != null ? ... : null
-                    // Ya da FamilyDoctorId'yi int yapıp DeleteBehavior.Restrict kullan.
-                    FamilyDoctorFullName = familyDoctor.FamilyDoctor.FirstName + " " + familyDoctor.FamilyDoctor.LastName,
-                    AssignedAt=familyDoctor.AssignedAt,
-                    UnassignedAt=familyDoctor.UnassignedAt,
+            var histories = await _context.patientFamilyDoctorHistories
+                .AsNoTracking()
+                .Include(h => h.FamilyDoctor)
+                .Where(h => h.PatientId == patientId)
+                .OrderByDescending(h => h.AssignedAt)
+                .ToListAsync();
 
-
-
-
-                });
-
-            return familyDoctorsList;
-
+            return histories.Select(ToDto).ToList();
         }
+
+        // Entity -> DTO dönüşümü tek yerde (iki metotta da aynı alanlar kullanılıyor).
+        // FamilyDoctor null olamaz: doktorlar silinmiyor (soft delete), Include ile yükleniyor.
+        private static GetByIdFamilyDoctorHistoryDto ToDto(PatientFamilyDoctorHistory h)
+            => new GetByIdFamilyDoctorHistoryDto
+            {
+                Id = h.Id,
+                PatientId = h.PatientId,
+                FamilyDoctorId = h.FamilyDoctorId,
+                FamilyDoctorFullName = h.FamilyDoctor.FirstName + " " + h.FamilyDoctor.LastName,
+                AssignedAt = h.AssignedAt,
+                UnassignedAt = h.UnassignedAt
+            };
     }
 }

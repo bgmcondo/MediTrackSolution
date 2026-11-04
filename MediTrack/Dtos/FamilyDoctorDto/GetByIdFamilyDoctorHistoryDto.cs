@@ -15,13 +15,13 @@ namespace MediTrack.Dtos.FamilyDoctorDto
         public string PatientFullName { get; set; } = string.Empty;
 
         // Hastaya atanmış aile hekiminin ID bilgisi.
-        public int? FamilyDoctorId { get; set; }
+        public int FamilyDoctorId { get; set; }
 
 
 
         // Aile hekiminin adı ve soyadı birleştirilerek gösterilir.
         // Service katmanında hesaplanır.
-        public string FamilyDoctorFullName { get; set; } = string.Empty;
+        public string? FamilyDoctorFullName { get; set; } = string.Empty;
 
         // Aile hekiminin atandığı tarih.
         // DateTime.Now kullanmıyoruz.

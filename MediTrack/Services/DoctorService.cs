@@ -104,7 +104,7 @@ namespace MediTrack.Services
          return result;
         }
 
-        public async Task<UpdateDoctorDto> UpdateDoctorAsync(int doctorId,UpdateDoctorDto updateDoctorDto)
+        public async Task<GetByIdDoctorDto> UpdateDoctorAsync(int doctorId,UpdateDoctorDto updateDoctorDto)
         {
             var targetDoctor =await  _context.Doctors.FindAsync(doctorId);
             if (targetDoctor == null||targetDoctor.Status==DoctorStatus.Deleted)
@@ -114,11 +114,15 @@ namespace MediTrack.Services
             targetDoctor.IsFamilyDoctor=updateDoctorDto.IsFamilyDoctor;
             targetDoctor.Branch=updateDoctorDto.Branch;
             await _context.SaveChangesAsync();
-            return new UpdateDoctorDto
+            return new GetByIdDoctorDto
             {
-                Title = updateDoctorDto.Title,
-                IsFamilyDoctor=updateDoctorDto.IsFamilyDoctor,
-                Branch=updateDoctorDto.Branch
+                Id = targetDoctor.Id,
+                FirstName = targetDoctor.FirstName,
+                LastName = targetDoctor.LastName,
+                Branch = targetDoctor.Branch,
+                Title = targetDoctor.Title,
+                IsFamilyDoctor = targetDoctor.IsFamilyDoctor,
+                Status = targetDoctor.Status
 
             };
 

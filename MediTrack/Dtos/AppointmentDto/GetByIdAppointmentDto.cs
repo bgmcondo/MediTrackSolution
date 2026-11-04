@@ -1,4 +1,5 @@
 ﻿using MediTrack.Entities;
+using MediTrack.Enums;
 
 namespace MediTrack.Dtos.AppointmentDto
 {

@@ -1,136 +1,94 @@
 ﻿using MediTrack.Dtos.DoctorDto;
+using MediTrack.Enums;
 using MediTrack.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MediTrack.Enums;
 
 namespace MediTrack.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize] // giriş yapmış herkes (Admin, Doctor, Patient) okuyabilir
     public class DoctorsController : ControllerBase
     {
         private readonly IDoctorService _doctorService;
+
+        private const string PendingDeletionMessage =
+            "Doktorun bitmemiş randevuları veya kayıtlı hastaları var. Yeni randevu alınamayacak şekilde işaretlendi; bunlar bitince tekrar silebilirsiniz.";
+
         public DoctorsController(IDoctorService doctorService)
-
         {
-
             _doctorService = doctorService;
-
-
         }
 
+        // GET api/doctors
+        // Doktor listesi: randevu alırken doktor seçmek için herkes görebilir
         [HttpGet]
-        [Authorize(Roles = "Admin,Doctor,Patient")]
-        public async Task<ActionResult<List<GetByIdDoctorDto>>> GetAllDoctors()
-        {
+        public Task<IActionResult> GetAllDoctors() => Execute(async () =>
+            Ok(await _doctorService.GetAllDoctorsAsync()));
 
-           
-                var doctors = await _doctorService.GetAllDoctorsAsync();
-                return Ok(doctors);
+        // GET api/doctors/7
+        [HttpGet("{id:int:min(1)}")]
+        public Task<IActionResult> GetDoctorById(int id) => Execute(async () =>
+            Ok(await _doctorService.GetDoctorByIdAsync(id)));
 
+        // GET api/doctors/family-doctors
+        // Aile hekimi listesi: hasta aile hekimi seçerken görür. Boşsa [] döner.
+        [HttpGet("family-doctors")]
+        public Task<IActionResult> GetAllFamilyDoctors() => Execute(async () =>
+            Ok(await _doctorService.GetFamilyDoctorsAsync()));
 
-        }
+        // GET api/doctors/family-doctors/7
+        [HttpGet("family-doctors/{id:int:min(1)}")]
+        public Task<IActionResult> GetFamilyDoctorById(int id) => Execute(async () =>
+            Ok(await _doctorService.GetFamilyDoctorByIdAsync(id)));
 
-        [HttpGet("{id:int}")]
-        [Authorize(Roles = "Admin,Doctor,Patient")]
-
-        public async Task<ActionResult<GetByIdDoctorDto>> GetDoctorById(int id)
-        {
-            try
-            {
-                var doctor = await _doctorService.GetDoctorByIdAsync(id);
-                return Ok(doctor);
-            }
-            catch (KeyNotFoundException ex)
-            {
-                 
-              return NotFound(new {message=ex.Message});
-
-            }
-        }
-
-        [HttpGet("familyDoctor/{familyDoctorId:int}")]
-
-        [Authorize(Roles = "Admin,Doctor,Patient")]
-        public async Task<ActionResult<GetByIdDoctorDto>> GetFamilyDoctorById(int familyDoctorId)
-        {
-            try
-            {
-                var familyDoctor = await _doctorService.GetFamilyDoctorByIdAsync(familyDoctorId);
-               
-                return Ok(familyDoctor);
-            }
-            catch (KeyNotFoundException ex)
-            {
-
-                return NotFound(new {message=ex.Message});
-
-            }
-        }
-
-        [HttpGet("familyDoctors")]
-
-        [Authorize(Roles = "Admin,Doctor,Patient")]
-        public async Task<ActionResult<List<GetByIdDoctorDto>>> GetAllFamilyDoctors()
-        {
-
-            try
-            {
-                var familyDoctors = await _doctorService.GetFamilyDoctorsAsync();
-                return Ok(familyDoctors);
-            }
-
-            catch(KeyNotFoundException ex)
-            {
-
-                return NotFound(new {message=ex.Message});
-            }
-
-          
-        }
-
-
+        // PUT api/doctors/7
+        // Doktor bilgisi güncelleme: sadece Admin
         [HttpPut("{id:int:min(1)}")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<UpdateDoctorDto>>  Update(int id, UpdateDoctorDto updateDoctorDto)
-        {
-            try
-            {
-                var updatedDoctor = await _doctorService.UpdateDoctorAsync(id, updateDoctorDto);
+        public Task<IActionResult> Update(int id, UpdateDoctorDto updateDoctorDto) => Execute(async () =>
+            Ok(await _doctorService.UpdateDoctorAsync(id, updateDoctorDto)));
 
-                return Ok(updatedDoctor);
-            }
-            catch (KeyNotFoundException ex)
-            {
-
-                return NotFound(new {message=ex.Message});
-            }
-
-
-
-        }
-
+        // DELETE api/doctors/7
+        // Doktor silme (soft delete): sadece Admin
+        // - Bitmemiş randevusu veya kayıtlı hastası varsa: PendingDeletion olarak işaretlenir -> 409
+        // - Yoksa: Deleted olarak işaretlenir -> 204
         [HttpDelete("{id:int:min(1)}")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult> Delete(int id)
+        public Task<IActionResult> Delete(int id) => Execute(async () =>
+        {
+            var status = await _doctorService.DeleteDoctorAsync(id);
+
+            if (status == DoctorStatus.PendingDeletion)
+                return Conflict(new { status = status.ToString(), message = PendingDeletionMessage }); // 409
+
+            return NoContent(); // 204
+        });
+
+        // Tüm endpoint'lerde aynı try/catch bloğunu tekrar yazmamak için ortak yardımcı
+        private async Task<IActionResult> Execute(Func<Task<IActionResult>> action)
         {
             try
             {
-               var status= await _doctorService.DeleteDoctorAsync(id);
-                if (status == DoctorStatus.PendingDeletion)
-                    return Accepted(new { message = "Doktorun bitmemiş randevuları veya kayıtlı hastaları var. Yeni randevu alınamayacak şekilde işaretlendi; bunlar bitince tekrar silebilirsiniz." });   // 202
-                return NoContent();
-                
+                return await action();
             }
-            catch (KeyNotFoundException ex)
+            catch (UnauthorizedAccessException ex)   // yetki yok
             {
-
-
-                return NotFound(new { message=ex.Message });
-
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+            }
+            catch (KeyNotFoundException ex)           // kayıt bulunamadı
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)      // mevcut durumla çakışma
+            {
+                return Conflict(new { message = ex.Message });
+            }
+            catch (ArgumentException ex)              // geçersiz veri
+            {
+                return BadRequest(new { message = ex.Message });
             }
         }
     }
-
 }

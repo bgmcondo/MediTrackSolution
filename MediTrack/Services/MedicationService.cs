@@ -1,4 +1,5 @@
-﻿using MediTrack.Data;
+﻿using System.Linq.Expressions;
+using MediTrack.Data;
 using MediTrack.Dtos.MedicationDto;
 using MediTrack.Entities;
 using MediTrack.Interfaces;
@@ -9,185 +10,129 @@ namespace MediTrack.Services
     public class MedicationService : IMedicationService
     {
         private readonly MediTrackDbContext _context;
+        private readonly IAccessService _access;   // hastanın ilaç geçmişi için yetki kontrolü
 
-        public MedicationService(MediTrackDbContext context)
+        public MedicationService(MediTrackDbContext context, IAccessService access)
         {
             _context = context;
-
-            
+            _access = access;
         }
+
+        // Entity -> DTO dönüşümü tek yerde.
+        // Expression: sorgu içinde (Select) kullanılır, EF Core SQL'e çevirir.
+        private static readonly Expression<Func<Medication, GetByIdMedicationDto>> ToDto =
+            m => new GetByIdMedicationDto
+            {
+                Id = m.Id,
+                Name = m.Name,
+                Barcode = m.Barcode,
+                Description = m.Description
+            };
+
+        // Aynı dönüşümün bellekteki nesneler için derlenmiş hali (Create/Update sonrası).
+        // Bir kez derlenir, her çağrıda yeniden derlenmez.
+        private static readonly Func<Medication, GetByIdMedicationDto> ToDtoFunc = ToDto.Compile();
+
+        // ---------------- İlaç kataloğu ----------------
+        // Bu metotlar hasta verisi içermez, sahiplik kontrolü gerekmez.
+        // Yetki controller'daki rollerle sağlanır (ekleme/güncelleme: sadece Admin).
+
         public async Task<GetByIdMedicationDto> CreateMedicationAsync(CreateMedicationDto createMedicationDto)
         {
-            //eklenecekler listesine koy henüz veritabanına yazılmadı
-            var isSameBarcode=await _context.Medications.AnyAsync(e=>e.Barcode==createMedicationDto.Barcode);
-            if (isSameBarcode) 
-                throw new InvalidOperationException("Bu barkodla kayıtlı bir ilaç zaten var.");
-            // 1. Entity oluştur
+            var barcodeExists = await _context.Medications
+                .AnyAsync(m => m.Barcode == createMedicationDto.Barcode);
+            if (barcodeExists)
+                throw new InvalidOperationException("Bu barkodla kayıtlı bir ilaç zaten var");
+
             var medication = new Medication
             {
                 Name = createMedicationDto.Name,
                 Barcode = createMedicationDto.Barcode,
                 Description = createMedicationDto.Description
             };
-            _context.Medications.Add(medication);   
-            
-            //Veritabanına yaz
-            await _context.SaveChangesAsync();
-            return new GetByIdMedicationDto
-            {
-                Id =medication.Id,
-                Name=medication.Name,
-                Barcode=medication.Barcode,
-                Description=medication.Description,
-            };
 
-      
+            _context.Medications.Add(medication);   // eklenecekler listesine koy (henüz yazılmadı)
+            await _context.SaveChangesAsync();      // veritabanına yaz, Id burada oluşur
+
+            return ToDtoFunc(medication);
         }
 
         public async Task<List<GetByIdMedicationDto>> GetAllMedicationsAsync()
         {
-            var medicationListEntity = await _context.Medications.AsNoTracking().ToListAsync();  // sadece okuyoruz, değiştirmeyeceğiz -> EF Core takip etmesin, daha hızlı
-            var medications = new List<GetByIdMedicationDto>();
-            foreach (var medication in medicationListEntity)
-                medications.Add(new GetByIdMedicationDto
-                {
-                    Id= medication.Id,
-                    Name = medication.Name,
-                    Barcode=medication.Barcode,
-                    Description=medication.Description,
-
-
-                }
-                    );
-          
-
-            return medications; // boşsa [] döner, frontend "Henüz ilaç eklenmemiş" yazar
+            // Sadece okuma: AsNoTracking ile EF Core takip etmez, daha hızlı.
+            // Boşsa [] döner, frontend "Henüz ilaç eklenmemiş" yazar.
+            return await _context.Medications
+                .AsNoTracking()
+                .OrderBy(m => m.Name)
+                .Select(ToDto)
+                .ToListAsync();
         }
 
         public async Task<GetByIdMedicationDto> GetMedicationByIdAsync(int id)
         {
-            var medicationEntity = await _context.Medications.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id);
-
-            if (medicationEntity == null)
-
-                throw new KeyNotFoundException("İlaç bulunamadı");
-
-            var medication = new GetByIdMedicationDto
-            {
-                Id =medicationEntity.Id,
-                Name = medicationEntity.Name,
-                Barcode=medicationEntity.Barcode,
-                Description=medicationEntity.Description,
-            };
-
-           return medication;
-
-            
+            return await _context.Medications
+                .AsNoTracking()
+                .Where(m => m.Id == id)
+                .Select(ToDto)
+                .FirstOrDefaultAsync()
+                ?? throw new KeyNotFoundException("İlaç bulunamadı");
         }
-        public async Task<UpdateMedicationDto> UpdateMedicationAsync(int id, UpdateMedicationDto updateMedicationDto)
+
+        public async Task<GetByIdMedicationDto> UpdateMedicationAsync(int id, UpdateMedicationDto updateMedicationDto)
         {
+            // Güncelleneceği için AsNoTracking kullanılmıyor
+            var medication = await _context.Medications.FirstOrDefaultAsync(m => m.Id == id)
+                ?? throw new KeyNotFoundException("İlaç bulunamadı");
 
+            // Aynı barkod başka bir ilaçta var mı? (kendisi hariç)
+            var barcodeExists = await _context.Medications
+                .AnyAsync(m => m.Barcode == updateMedicationDto.Barcode && m.Id != id);
+            if (barcodeExists)
+                throw new InvalidOperationException("Aynı barkoda sahip başka bir ilaç var");
 
-            var medicationEntity =await _context.Medications.FirstOrDefaultAsync(e => e.Id == id);
+            medication.Name = updateMedicationDto.Name;
+            medication.Description = updateMedicationDto.Description;
+            medication.Barcode = updateMedicationDto.Barcode;
 
-            // GetMedicationByIdAsync: Id URL'den → istenen kaynak yok → 404
-            if (medicationEntity == null)
-                throw new KeyNotFoundException("İlaç bulunamadı");
-
-
-         
-            var isSameBarcode = await _context.Medications.AnyAsync(e => e.Barcode == updateMedicationDto.Barcode && e.Id != id);
-            if (isSameBarcode)
-                throw new InvalidOperationException("Aynı barkoda sahip başka bir ilaç daha var");
-            // 3. Alanları tek tek güncelle
-            medicationEntity.Name = updateMedicationDto.Name;
-            medicationEntity.Description = updateMedicationDto.Description;
-            medicationEntity.Barcode = updateMedicationDto.Barcode;
-
-            
-
-            // 4. Değişiklikleri veritabanına yaz
+            // Entity takip edildiği için _context.Update gerekmez
             await _context.SaveChangesAsync();
 
-
-            // 5. Güncellenmiş hâlini döndür
-            return new UpdateMedicationDto
-            {
-                Name = medicationEntity.Name,
-                Description = medicationEntity.Description,
-                Barcode=medicationEntity.Barcode,
-
-
-            };
-
+            // Güncellenmiş hali (Id dahil) döndür
+            return ToDtoFunc(medication);
         }
 
+        // ---------------- Hastanın ilaç geçmişi ----------------
 
-        // Include(am => am.Medication) dönen tipi DEĞİŞTİRMEZ; sorgu yine List<AppointmentMedication> döner.
-        // Sadece her AppointmentMedication nesnesinin İÇİNDEKİ Medication property'sini doldurur.
-        //
-        // Include OLMADAN her nesne şöyle gelir:
-        //
-        // AppointmentMedication
-        // ├── AppointmentId = 1
-        // ├── MedicationId  = 100
-        // ├── Dosage        = "1 tablet"
-        // ├── Medication    = null        ← boş
-        // └── Appointment   = null
-        //
-        // Include(am => am.Medication) İLE:
-        //
-        // AppointmentMedication
-        // ├── AppointmentId = 1
-        // ├── MedicationId  = 100
-        // ├── Dosage        = "1 tablet"
-        // ├── Medication    = { Id = 100, Name = "Parol", Barcode = ..., Description = ... }   ← dolu
-        // └── Appointment   = null
-        //
-        // Appointment'ı Include etmedik çünkü sonuçta kullanmıyoruz.
-        // Where içindeki am.Appointment.PatientId için Include gerekmez; EF Core join'i kendisi kurar.
-
-        public async Task <List<GetByIdMedicationDto>> GetPatientMedicationsAsync(int patientId)
+        // TIBBİ VERİ: Sadece hastanın kendisi ve ilişkili doktor görebilir, Admin göremez.
+        // Her reçete satırı ayrı döner: aynı ilaç farklı randevularda yazıldıysa birden fazla satır olur.
+        public async Task<List<PatientMedicationHistoryDto>> GetPatientMedicationsAsync(int patientId)
         {
-            var patientExists = await _context.Patients.AnyAsync(e=>e.Id==patientId);
+            await _access.EnsureCanAccessPatientMedicalDataAsync(patientId);
+
+            var patientExists = await _context.Patients.AnyAsync(p => p.Id == patientId);
             if (!patientExists)
-                throw new KeyNotFoundException($"{patientId} id'li hasta bulunamadı");
-           // 2) Bu hastanın randevularına yazılmış ilaç kayıtlarını, ilaç bilgisiyle birlikte getir
-            var appointmentMedicationsEntity=await _context.AppointmentMedications.Include(e=>e.Medication).Where(e=>e.Appointment.PatientId==patientId).ToListAsync();
-           
-            var medications=new List<GetByIdMedicationDto>();
+                throw new KeyNotFoundException("Hasta bulunamadı");
 
-            foreach (var appointmentMedication in appointmentMedicationsEntity)
-            {
-                //include sayesinde dolu olan ilaca ulaşıyoruz
-                var medication = appointmentMedication.Medication;
-
-                // bu ilaç listeye daha önce eklendiyse atla
-                if (medications.Any(e => e.Id == medication.Id))
-                    continue;
-
-                //İlacı Dto'ya çevirip listeye ekle
-                medications.Add(new GetByIdMedicationDto
+            // Select içinde navigation property'lere (Medication, Appointment, Appointment.Doctor)
+            // erişildiği için Include gerekmez: EF Core gerekli JOIN'leri kendisi kurar
+            // ve sadece seçilen kolonları çeker.
+            return await _context.AppointmentMedications
+                .AsNoTracking()
+                .Where(am => am.Appointment.PatientId == patientId)
+                .OrderByDescending(am => am.Appointment.AppointmentDate)   // en yeni reçete en üstte
+                .Select(am => new PatientMedicationHistoryDto
                 {
-                    Id = medication.Id,
-                    Name=medication.Name,
-                    Barcode=medication.Barcode,
-                    Description=medication.Description,
-
-                });
-
-            
-              
-            }
-
-
-
-            return medications;
-
-
+                    AppointmentId = am.AppointmentId,
+                    MedicationId = am.MedicationId,
+                    MedicationName = am.Medication.Name,
+                    Barcode = am.Medication.Barcode,
+                    Dosage = am.Dosage,
+                    UsageInstructions = am.UsageInstructions,
+                    PrescribedAt = am.Appointment.AppointmentDate,
+                    DoctorId = am.Appointment.DoctorId,
+                    DoctorFullName = am.Appointment.Doctor.FirstName + " " + am.Appointment.Doctor.LastName
+                })
+                .ToListAsync();
         }
-
-
-
     }
 }
