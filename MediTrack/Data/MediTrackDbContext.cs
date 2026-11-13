@@ -55,7 +55,7 @@ namespace MediTrack.Data
                 // Hasta silinirse doktor otomatik silinmez.
 
                 entity.HasOne(p => p.CurrentFamilyDoctor)
-                    .WithMany()
+                    .WithMany(d => d.Patients)
                     .HasForeignKey(p => p.CurrentFamilyDoctorId)
                     .IsRequired(false)
                     .OnDelete(DeleteBehavior.Restrict);
@@ -138,7 +138,7 @@ namespace MediTrack.Data
                 // Cascade yerine Restrict tercih edildi.
 
                 entity.HasOne(a => a.Patient)
-                    .WithMany()
+                    .WithMany(p => p.Appointments)
                     .HasForeignKey(a => a.PatientId)
                     .OnDelete(DeleteBehavior.Restrict);
 
@@ -156,7 +156,7 @@ namespace MediTrack.Data
                 // Randevu silinirse doktor silinmez.
 
                 entity.HasOne(a => a.Doctor)
-                    .WithMany()
+                    .WithMany(d => d.Appointments)
                     .HasForeignKey(a => a.DoctorId)
                     .OnDelete(DeleteBehavior.Restrict);
             });
@@ -172,6 +172,12 @@ namespace MediTrack.Data
 
                 entity.HasIndex(m => m.Barcode)
                     .IsUnique();
+
+                // Medication.Appointments'ın Appointment tarafında karşılığı yok.
+                // Yok sayılmazsa EF, Appointments tablosuna gereksiz bir
+                // MedicationId sütunu ekler. İlaç-randevu ilişkisi
+                // AppointmentMedications ara tablosu üzerinden kurulur.
+                entity.Ignore(m => m.Appointments);
             });
 
             // ============================================
@@ -195,7 +201,7 @@ namespace MediTrack.Data
                 // Geçmiş kaydı silinirse hasta silinmez.
 
                 entity.HasOne(h => h.Patient)
-                    .WithMany()
+                    .WithMany(p => p.PatientFamilyDoctorHistories)
                     .HasForeignKey(h => h.PatientId)
                     .OnDelete(DeleteBehavior.Restrict);
 
@@ -258,7 +264,7 @@ namespace MediTrack.Data
                 // İlaç ilişki kaydı silinirse randevu silinmez.
 
                 entity.HasOne(am => am.Appointment)
-                    .WithMany()
+                    .WithMany(a => a.Appointments)
                     .HasForeignKey(am => am.AppointmentId)
                     .OnDelete(DeleteBehavior.Restrict);
 
@@ -279,7 +285,7 @@ namespace MediTrack.Data
                 // Medication kaydı silinmez.
 
                 entity.HasOne(am => am.Medication)
-                    .WithMany()
+                    .WithMany(m => m.AppointmentMedications)
                     .HasForeignKey(am => am.MedicationId)
                     .OnDelete(DeleteBehavior.Restrict);
             });

@@ -7,14 +7,39 @@ using Microsoft.AspNetCore.Authorization;   // YENİ: AuthorizationPolicyBuilder
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Swagger arayüzü (JWT "Authorize" butonu ile)
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "MediTrack API",
+        Version = "v1"
+    });
+
+    // Swagger'da "Authorize" butonu çıkarır, JWT token'ı buraya yapıştırılır
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Login'den aldığınız token'ı yapıştırın (başına 'Bearer' yazmayın)"
+    });
+
+    // Token'ı tüm isteklere otomatik ekler
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+    });
+});
 
 // SQL Server bağlantısı
 builder.Services.AddDbContext<MediTrackDbContext>(
@@ -177,7 +202,11 @@ using (var scope = app.Services.CreateScope())
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "MediTrack API v1");
+    });
 }
 
 app.UseHttpsRedirection(); // gelen http isteğini https'e yönlendirir, https zorunlu hale gelir
