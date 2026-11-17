@@ -109,6 +109,10 @@ namespace MediTrack.Migrations
                     b.Property<int>("AppointmentStatus")
                         .HasColumnType("int");
 
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<int>("DoctorId")
                         .HasColumnType("int");
 
@@ -137,11 +141,13 @@ namespace MediTrack.Migrations
 
                     b.Property<string>("Dosage")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("UsageInstructions")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.HasKey("AppointmentId", "MedicationId");
 
@@ -202,15 +208,20 @@ namespace MediTrack.Migrations
 
                     b.Property<string>("Barcode")
                         .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(13)
+                        .HasColumnType("nvarchar(13)");
 
                     b.Property<string>("Description")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.HasKey("Id");
 

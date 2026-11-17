@@ -58,6 +58,25 @@ namespace MediTrack.Controllers
         [Authorize(Roles = "Doctor,Patient")]
         public Task<IActionResult> GetAllByPatientId(int patientId) => Execute(async () =>
             Ok(await _medicationService.GetPatientMedicationsAsync(patientId)));
+        // DELETE api/medications/5
+        // İlacı katalogdan kaldırır (soft delete, kayıt silinmez): sadece Admin
+        [HttpDelete("{id:int:min(1)}")]
+        [Authorize(Roles = "Admin")]
+        public Task<IActionResult> Deactivate(int id) => Execute(async () =>
+        {
+            await _medicationService.DeactivateMedicationAsync(id);
+            return NoContent(); // 204
+        });
+
+        // PUT api/medications/5/activate
+        // Pasif ilacı tekrar kataloğa alır: sadece Admin
+        [HttpPut("{id:int:min(1)}/activate")]
+        [Authorize(Roles = "Admin")]
+        public Task<IActionResult> Activate(int id) => Execute(async () =>
+        {
+            await _medicationService.ActivateMedicationAsync(id);
+            return NoContent(); // 204
+        });
 
         // Tüm endpoint'lerde aynı try/catch bloğunu tekrar yazmamak için ortak yardımcı
         private async Task<IActionResult> Execute(Func<Task<IActionResult>> action)

@@ -23,10 +23,14 @@ namespace MediTrack.Dtos.AuthDto
         [Required]
         public string LastName { get; set; } = null!;
 
+        [Required(ErrorMessage = "Branş zorunludur.")]
+        [StringLength(100, ErrorMessage = "Branş en fazla 100 karakter olabilir.")]
+
         public string Branch{ get; set; } = null!;
 
-
-        public string Title { get; set; } = null!; // Unvan (ör. Uzm. Dr., Doç. Dr.). Doctor entity'sinde zorunlu alan.
+        [Required(ErrorMessage = "Unvan zorunludur.")]
+        [StringLength(50, ErrorMessage = "Unvan en fazla 50 karakter olabilir.")]
+       public string Title { get; set; } = null!; // Unvan (ör. Uzm. Dr., Doç. Dr.). Doctor entity'sinde zorunlu alan.
 
         public bool IsFamilyDoctor { get; set; } // Aile hekimi mi? Gönderilmezse false olur.
     }

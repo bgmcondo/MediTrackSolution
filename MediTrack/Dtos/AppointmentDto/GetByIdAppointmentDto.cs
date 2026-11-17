@@ -18,6 +18,9 @@ namespace MediTrack.Dtos.AppointmentDto
 
         public DateTime AppointmentDate { get; set; }
 
+        // true: hasta kendisi aldı, false: başkası (ör. Admin) onun adına oluşturdu
+        public bool IsCreatedByPatient { get; set; }
+
         public AppointmentStatus AppointmentStatus { get; set; }
 
 

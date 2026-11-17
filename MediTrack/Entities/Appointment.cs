@@ -19,7 +19,10 @@ namespace MediTrack.Entities
 
         public bool IsFamilyDoctorAppointment { get; set; }
 
-        public AppointmentStatus AppointmentStatus { get; set; } 
+        public AppointmentStatus AppointmentStatus { get; set; }
+
+        // Randevuyu oluşturan kullanıcı (AspNetUsers.Id). Hasta kendisi de olabilir, Admin de.
+        public string CreatedByUserId { get; set; } = null!;   // kim (kesin kimlik)
 
 
         public ICollection<AppointmentMedication> Appointments { get; set; }= new List<AppointmentMedication>();

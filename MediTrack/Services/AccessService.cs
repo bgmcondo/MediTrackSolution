@@ -23,10 +23,13 @@ namespace MediTrack.Services
         // Program.cs'te builder.Services.AddHttpContextAccessor(); satırı olmalı.
         private readonly IHttpContextAccessor _httpContextAccessor;
 
+      
+
         public AccessService(MediTrackDbContext context, IHttpContextAccessor httpContextAccessor)
         {
             _context = context;
             _httpContextAccessor = httpContextAccessor;
+            
         }
 
         // İDARİ VERİLER (randevu listesi, aile hekimi geçmişi):
@@ -80,6 +83,25 @@ namespace MediTrack.Services
             throw Denied("Bu doktorun verilerine erişim yetkiniz yok");
         }
 
+        // REÇETE YAZMA: sadece randevunun doktoru. Admin ve başka doktorlar yazamaz.
+        // (Admin hastayı tedavi etmez; tıbbi veri oluşturmak doktorun işidir.)
+        public async Task EnsureIsAppointmentDoctorAsync(int appointmentId)
+        {
+            var user = GetCurrentUser();
+
+            if (user.IsInRole(DoctorRole))
+            {
+                var doctorId = await GetDoctorIdAsync(GetUserId(user));
+
+                var isAppointmentDoctor = doctorId != null && await _context.Appointments
+                    .AnyAsync(a => a.Id == appointmentId && a.DoctorId == doctorId);
+
+                if (isAppointmentDoctor)
+                    return;
+            }
+
+            throw Denied("Reçeteyi sadece randevunun doktoru yazabilir");
+        }
         // RANDEVU İPTALİ: randevunun sahibi olan hasta ve Admin. Doktor iptal edemez.
         public async Task EnsureCanCancelAppointmentAsync(int appointmentId)
         {
@@ -107,6 +129,13 @@ namespace MediTrack.Services
 
             throw Denied("Bu randevuyu güncelleme yetkiniz yok");
         }
+
+
+        // İsteği yapan kullanıcının id'si. Diğer servisler (ör. randevu oluştururken CreatedBy) bunu kullanır.
+        public string GetCurrentUserId() => GetUserId(GetCurrentUser());
+
+        // İsteği yapan kullanıcı Admin mi? (ör. katalogda pasif ilaçları da görebilmek için)
+        public bool IsCurrentUserAdmin() => GetCurrentUser().IsInRole(AdminRole);
 
         // ---------------- Yardımcı metotlar ----------------
 

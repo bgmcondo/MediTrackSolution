@@ -10,12 +10,12 @@ namespace MediTrack.Services
     public class MedicationService : IMedicationService
     {
         private readonly MediTrackDbContext _context;
-        private readonly IAccessService _access;   // hastanın ilaç geçmişi için yetki kontrolü
+        private readonly IAccessService _accessService;   // hastanın ilaç geçmişi için yetki kontrolü
 
-        public MedicationService(MediTrackDbContext context, IAccessService access)
+        public MedicationService(MediTrackDbContext context, IAccessService accessService)
         {
             _context = context;
-            _access = access;
+            _accessService = accessService;
         }
 
         // Entity -> DTO dönüşümü tek yerde.
@@ -26,7 +26,8 @@ namespace MediTrack.Services
                 Id = m.Id,
                 Name = m.Name,
                 Barcode = m.Barcode,
-                Description = m.Description
+                Description = m.Description,
+                IsActive=m.IsActive
             };
 
         // Aynı dönüşümün bellekteki nesneler için derlenmiş hali (Create/Update sonrası).
@@ -61,8 +62,11 @@ namespace MediTrack.Services
         {
             // Sadece okuma: AsNoTracking ile EF Core takip etmez, daha hızlı.
             // Boşsa [] döner, frontend "Henüz ilaç eklenmemiş" yazar.
+            //Adminde pasifse bile listede yer alsın
+            var includeInactive = _accessService.IsCurrentUserAdmin();
             return await _context.Medications
                 .AsNoTracking()
+                .Where(m=>includeInactive||m.IsActive)
                 .OrderBy(m => m.Name)
                 .Select(ToDto)
                 .ToListAsync();
@@ -107,7 +111,7 @@ namespace MediTrack.Services
         // Her reçete satırı ayrı döner: aynı ilaç farklı randevularda yazıldıysa birden fazla satır olur.
         public async Task<List<PatientMedicationHistoryDto>> GetPatientMedicationsAsync(int patientId)
         {
-            await _access.EnsureCanAccessPatientMedicalDataAsync(patientId);
+            await _accessService.EnsureCanAccessPatientMedicalDataAsync(patientId);
 
             var patientExists = await _context.Patients.AnyAsync(p => p.Id == patientId);
             if (!patientExists)
@@ -133,6 +137,34 @@ namespace MediTrack.Services
                     DoctorFullName = am.Appointment.Doctor.FirstName + " " + am.Appointment.Doctor.LastName
                 })
                 .ToListAsync();
+        }
+
+        // Soft delete: ilaç silinmez, pasifleştirilir.
+        // Pasif ilaç katalog listesinde görünmez ve yeni reçeteye yazılamaz;
+        // eski reçetelerde adı görünmeye devam eder (hasta geçmişi bozulmaz).
+        public async Task DeactivateMedicationAsync(int id)
+        {
+            var medication = await _context.Medications.FirstOrDefaultAsync(m => m.Id == id)
+                ?? throw new KeyNotFoundException("İlaç bulunamadı");
+
+            if (!medication.IsActive)
+                throw new InvalidOperationException("İlaç zaten pasif");
+
+            medication.IsActive = false;
+            await _context.SaveChangesAsync();
+        }
+
+        // Yanlışlıkla pasifleştirilen ya da tekrar piyasaya çıkan ilacı geri açar.
+        public async Task ActivateMedicationAsync(int id)
+        {
+            var medication = await _context.Medications.FirstOrDefaultAsync(m => m.Id == id)
+                ?? throw new KeyNotFoundException("İlaç bulunamadı");
+
+            if (medication.IsActive)
+                throw new InvalidOperationException("İlaç zaten aktif");
+
+            medication.IsActive = true;
+            await _context.SaveChangesAsync();
         }
     }
 }

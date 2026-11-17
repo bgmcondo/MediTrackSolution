@@ -18,5 +18,14 @@
 
         // Randevuyu güncelleme: SADECE randevunun sahibi olan hasta ve Admin görebilir
         Task EnsureCanUpdateAppointmentAsync(int appointmentId);
+
+        // Reçete yazma: sadece randevunun doktoru
+        Task EnsureIsAppointmentDoctorAsync(int appointmentId);
+
+
+        // İsteği yapan (token sahibi) kullanıcının id'si (AspNetUsers.Id)
+        string GetCurrentUserId();
+
+        bool IsCurrentUserAdmin();
     }
 }

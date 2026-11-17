@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net.Sockets;
 using System.Security.Claims;
 using System.Text;
 
@@ -16,30 +17,37 @@ namespace MediTrack.Services
     {
         private readonly UserManager<ApplicationUser> _userManager; // Kullanıcı oluşturma, şifre doğrulama ve rol atama işlemlerini yönetir.
         private readonly RoleManager<IdentityRole> _roleManager;    // Kullanıcı rolleri ile ilgili işlemleri yönetir.
+        private readonly ILogger<AuthService> _logger;
+
         private readonly MediTrackDbContext _context;
         private readonly IConfiguration _configuration;
 
-        public AuthService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager,
+        public AuthService(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager,ILogger<AuthService>logger,
             MediTrackDbContext dbContext, IConfiguration configuration)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _context = dbContext;
             _configuration = configuration;
+            _logger = logger;
         }
 
         public async Task<LoginResponseDto> LoginAsync(LoginDto loginDto)
         {
             // Hangi bilginin yanlış olduğunu söylemiyoruz: hangi e-postaların kayıtlı olduğu sızmasın
-            const string loginError = "Email veya şifre hatalı ya da hesabınız geçici olarak kilitlendi.";
+            const string loginError = "Email veya şifre hatalı";
+            const string lockedError = "Hesabınız çok fazla hatalı deneme nedeniyle geçici olarak kilitlendi. 5 dakika sonra tekrar deneyin.";
 
             // 1. Email ile kullanıcıyı bul
             var user = await _userManager.FindByEmailAsync(loginDto.Email);
 
-            // 2. Kullanıcı yoksa veya hesap kilitliyse -> hata
-            if (user == null || await _userManager.IsLockedOutAsync(user))
+            // 2a. Kullanıcı yoksa -> hata
+            if (user == null)
                 return new LoginResponseDto { IsSuccess = false, Message = loginError };
 
+            // 2b. Hesap kilitliyse -> ayrı mesaj
+            if (await _userManager.IsLockedOutAsync(user))
+                return new LoginResponseDto { IsSuccess = false, Message = lockedError };
             // 3. Şifre yanlışsa -> başarısız deneme sayacını artır (belirli sayıda hatada hesap kilitlenir)
             if (!await _userManager.CheckPasswordAsync(user, loginDto.Password))
             {
@@ -212,11 +220,19 @@ namespace MediTrack.Services
 
         public async Task<RegisterResponseDto> RegisterPatientAsync(RegisterPatientDto registerPatientDto)
         {
+
             // 1. Email ile kullanıcı var mı kontrol et
             var existingUser = await _userManager.FindByEmailAsync(registerPatientDto.Email);
             if (existingUser != null)
                 return Failure("Bu email adresi zaten kayıtlı.");
+            // 1b. TC kimlik no ile hasta var mı kontrol et
+            if (await _context.Patients.AnyAsync(p => p.NationalId == registerPatientDto.NationalId))
+            {
+                // Kullanıcı genel mesajı görür, gerçek sebep sadece log'da
+                _logger.LogWarning("Hasta kaydı reddedildi: TC kimlik no zaten kayıtlı.");
+                return Failure("Hasta kaydı oluşturulamadı.");
 
+            }
             // 2. Transaction başlat
             await using var transaction = await _context.Database.BeginTransactionAsync();
 

@@ -1,23 +1,24 @@
-﻿using System.Linq.Expressions;
-using MediTrack.Data;
+﻿using MediTrack.Data;
 using MediTrack.Dtos.AppointmentDto;
+using MediTrack.Dtos.MedicationDto;
 using MediTrack.Entities;
 using MediTrack.Enums;
 using MediTrack.Helpers;
 using MediTrack.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Expressions;
 
 namespace MediTrack.Services
 {
     public class AppointmentService : IAppointmentService
     {
         private readonly MediTrackDbContext _context;
-        private readonly IAccessService _access;   // sahiplik/yetki kontrolleri
+        private readonly IAccessService _accessService;   // sahiplik/yetki kontrolleri
 
-        public AppointmentService(MediTrackDbContext context, IAccessService access)
+        public AppointmentService(MediTrackDbContext context, IAccessService accessService)
         {
             _context = context;
-            _access = access;
+            _accessService = accessService;
         }
 
         // Entity -> DTO dönüşümü tek yerde. Select içinde kullanıldığı için EF Core bunu
@@ -31,13 +32,15 @@ namespace MediTrack.Services
                 PatientId = a.PatientId,
                 PatientFullName = a.Patient.FirstName + " " + a.Patient.LastName,
                 AppointmentDate = a.AppointmentDate,
-                AppointmentStatus = a.AppointmentStatus
+                AppointmentStatus = a.AppointmentStatus,
+            // true: hasta kendisi aldı, false: başkası (ör. Admin) onun adına oluşturdu
+               IsCreatedByPatient = a.CreatedByUserId == a.Patient.ApplicationUserId
             };
 
         // Admin: herhangi bir hasta için, Patient: sadece kendisi için
         public async Task<GetByIdAppointmentDto> CreateAppointmentAsync(CreateAppointmentDto createAppointmentDto)
         {
-            await _access.EnsureCanAccessPatientAsync(createAppointmentDto.PatientId);
+            await _accessService.EnsureCanAccessPatientAsync(createAppointmentDto.PatientId);
 
             var patientExists = await _context.Patients
                 .AnyAsync(p => p.Id == createAppointmentDto.PatientId);
@@ -68,12 +71,16 @@ namespace MediTrack.Services
             if (patientHasConflict)
                 throw new InvalidOperationException("Hastanın bu saatte başka randevusu var"); // DEĞİŞTİ
 
+            // Randevuyu oluşturan kullanıcı (token'dan okunur; istemci bunu değiştiremez)
+            var currentUserId = _accessService.GetCurrentUserId();
             var appointment = new Appointment
             {
                 AppointmentDate = createAppointmentDto.AppointmentDate,
                 DoctorId = createAppointmentDto.DoctorId,
                 PatientId = createAppointmentDto.PatientId,
-                AppointmentStatus = AppointmentStatus.Scheduled
+                AppointmentStatus = AppointmentStatus.Scheduled,
+                CreatedByUserId= currentUserId
+               
             };
 
             _context.Appointments.Add(appointment);
@@ -103,7 +110,7 @@ namespace MediTrack.Services
                 .FirstOrDefaultAsync()
                 ?? throw new KeyNotFoundException("Randevu bulunamadı");
 
-            await _access.EnsureCanAccessPatientAsync(patientId);
+            await _accessService.EnsureCanAccessPatientAsync(patientId);
 
             return await GetDtoAsync(appointmentId);
         }
@@ -111,7 +118,7 @@ namespace MediTrack.Services
         // Doktorun kendisi, Admin
         public async Task<List<GetByIdAppointmentDto>> GetAppointmentsByDoctorIdAsync(int doctorId)
         {
-            await _access.EnsureCanAccessDoctorAsync(doctorId);
+            await _accessService.EnsureCanAccessDoctorAsync(doctorId);
 
             var doctorExists = await _context.Doctors.AnyAsync(d => d.Id == doctorId);
             if (!doctorExists)
@@ -128,7 +135,7 @@ namespace MediTrack.Services
         // Hastanın kendisi, ilişkili doktor, Admin
         public async Task<List<GetByIdAppointmentDto>> GetAppointmentsByPatientIdAsync(int patientId)
         {
-            await _access.EnsureCanAccessPatientAsync(patientId);
+            await _accessService.EnsureCanAccessPatientAsync(patientId);
 
             var patientExists = await _context.Patients.AnyAsync(p => p.Id == patientId);
             if (!patientExists)
@@ -145,7 +152,7 @@ namespace MediTrack.Services
         // Randevunun sahibi olan hasta ve Admin
         public async Task<GetByIdAppointmentDto> UpdateAppointmentAsync(int appointmentId, UpdateAppointmentDto updateAppointmentDto)
         {
-            await _access.EnsureCanUpdateAppointmentAsync(appointmentId);
+            await _accessService.EnsureCanUpdateAppointmentAsync(appointmentId);
 
             // Güncelleneceği için AsNoTracking kullanılmıyor
             var appointment = await _context.Appointments.FirstOrDefaultAsync(a => a.Id == appointmentId)
@@ -193,7 +200,7 @@ namespace MediTrack.Services
         // Randevunun sahibi olan hasta, Admin
         public async Task CancelAppointmentAsync(int appointmentId)
         {
-            await _access.EnsureCanCancelAppointmentAsync(appointmentId);
+            await _accessService.EnsureCanCancelAppointmentAsync(appointmentId);
 
             var appointment = await _context.Appointments.FirstOrDefaultAsync(a => a.Id == appointmentId)
                 ?? throw new KeyNotFoundException("Randevu bulunamadı");
@@ -209,8 +216,60 @@ namespace MediTrack.Services
             await _context.SaveChangesAsync();
         }
 
+        // Randevuya reçete (ilaç) ekler. Yetki: sadece randevunun doktoru.
+        public async Task<PatientMedicationHistoryDto> PrescribeMedicationAsync(int appointmentId, PrescribeMedicationDto prescribeMedicationDto)
+        {
+            // Önce varlık kontrolü: olmayan randevu 404 dönsün, 403 değil
+            var appointment = await _context.Appointments.FirstOrDefaultAsync(a => a.Id == appointmentId)
+                ?? throw new KeyNotFoundException("Randevu bulunamadı");
+
+            await _accessService.EnsureIsAppointmentDoctorAsync(appointmentId);
+
+            if (appointment.AppointmentStatus == AppointmentStatus.Cancelled)
+                throw new InvalidOperationException("İptal edilmiş randevuya reçete yazılamaz");
+
+            var medication = await _context.Medications.FirstOrDefaultAsync(m => m.Id == prescribeMedicationDto.MedicationId)
+                ?? throw new KeyNotFoundException("İlaç bulunamadı");
+
+            if (!medication.IsActive)
+                throw new InvalidOperationException("Bu ilaç katalogdan kaldırılmış, reçeteye yazılamaz");
+
+            var alreadyPrescribed = await _context.AppointmentMedications
+                .AnyAsync(am => am.AppointmentId == appointmentId && am.MedicationId == prescribeMedicationDto.MedicationId);
+            if (alreadyPrescribed)
+                throw new InvalidOperationException("Bu ilaç bu randevuda zaten yazılmış");
+
+            _context.AppointmentMedications.Add(new AppointmentMedication
+            {
+                AppointmentId = appointmentId,
+                MedicationId = prescribeMedicationDto.MedicationId,
+                Dosage = prescribeMedicationDto.Dosage,
+                UsageInstructions =prescribeMedicationDto.UsageInstructions
+            });
+            await _context.SaveChangesAsync();
+
+            // Hastanın ilaç geçmişinde göreceği formatla aynı cevap
+            return await _context.AppointmentMedications
+                .AsNoTracking()
+                .Where(am => am.AppointmentId == appointmentId && am.MedicationId == prescribeMedicationDto.MedicationId)
+                .Select(am => new PatientMedicationHistoryDto
+                {
+                    AppointmentId = am.AppointmentId,
+                    MedicationId = am.MedicationId,
+                    MedicationName = am.Medication.Name,
+                    Barcode = am.Medication.Barcode,
+                    Dosage = am.Dosage,
+                    UsageInstructions = am.UsageInstructions,
+                    PrescribedAt = am.Appointment.AppointmentDate,
+                    DoctorId = am.Appointment.DoctorId,
+                    DoctorFullName = am.Appointment.Doctor.FirstName + " " + am.Appointment.Doctor.LastName
+                })
+                .FirstAsync();
+        }
+
+
         // Tek bir randevuyu doktor/hasta adlarıyla birlikte DTO olarak getirir.
-        // Create ve Update sonrası güncel hali dönmek için kullanılır.
+        // Create ve Update sonrası güncel hali dönmek için kullanılır
         private async Task<GetByIdAppointmentDto> GetDtoAsync(int appointmentId)
             => await _context.Appointments
                 .AsNoTracking()

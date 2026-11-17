@@ -90,6 +90,18 @@ namespace MediTrack.Controllers
             return NoContent(); // 204
         });
 
+
+        // POST api/appointments/5/medications
+        // Randevuya reçete (ilaç) yazma: sadece randevunun doktoru.
+        // Rol burada (Doctor), "bu randevunun doktoru mu" kontrolü serviste (AccessService).
+        [HttpPost("{id:int:min(1)}/medications")]
+        [Authorize(Roles = "Doctor")]
+        public Task<IActionResult> PrescribeMedication(int id, PrescribeMedicationDto prescribeMedicationDto) => Execute(async () =>
+        {
+            var prescription = await _appointmentService.PrescribeMedicationAsync(id, prescribeMedicationDto);
+            return StatusCode(StatusCodes.Status201Created, prescription); // 201
+        });
+
         // Tüm endpoint'lerde aynı try/catch bloğunu tekrar yazmamak için ortak yardımcı.
         // NOT: Global exception handler (IExceptionHandler) kullanılırsa bu metot da silinebilir.
         private async Task<IActionResult> Execute(Func<Task<IActionResult>> action)

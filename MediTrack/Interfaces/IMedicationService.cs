@@ -12,5 +12,8 @@ namespace MediTrack.Interfaces
 
         // Hastanın ilaç geçmişi (TIBBİ VERİ: hastanın kendisi ve ilişkili doktor; Admin göremez)
         Task<List<PatientMedicationHistoryDto>> GetPatientMedicationsAsync(int patientId);
+
+        Task DeactivateMedicationAsync(int id);
+        Task ActivateMedicationAsync(int id);
     }
 }

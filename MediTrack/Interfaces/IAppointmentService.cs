@@ -1,4 +1,5 @@
 ﻿using MediTrack.Dtos.AppointmentDto;
+using MediTrack.Dtos.MedicationDto;
 
 namespace MediTrack.Interfaces
 {
@@ -21,6 +22,9 @@ namespace MediTrack.Interfaces
 
         // randevunun sahibi olan hasta ve Admin
         Task<GetByIdAppointmentDto> UpdateAppointmentAsync(int appointmentId, UpdateAppointmentDto updateAppointmentDto);
+
+        // Randevuya reçete yazar. Yetki: sadece randevunun doktoru.
+        Task<PatientMedicationHistoryDto> PrescribeMedicationAsync(int appointmentId, PrescribeMedicationDto prescribeMedicationDto);
 
         // Randevunun sahibi olan hasta, Admin
         Task CancelAppointmentAsync(int appointmentId);

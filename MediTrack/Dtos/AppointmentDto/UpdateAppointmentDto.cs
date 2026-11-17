@@ -17,7 +17,7 @@ namespace MediTrack.Dtos.AppointmentDto
 
 
         public int DoctorId { get; set; }
-        public int PatientId { get; set; }
+        
 
         // AppointmentDate:
         // Hasta randevusunun tarihini veya saatini değiştirebilir.

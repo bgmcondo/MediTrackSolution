@@ -7,41 +7,23 @@ using Microsoft.AspNetCore.Authorization;   // YENİ: AuthorizationPolicyBuilder
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi;
 using System.Text;
-
+using Microsoft.OpenApi;
+using MediTrack.Extensions;
 var builder = WebApplication.CreateBuilder(args);
+
 
 // Add services to the container.
 builder.Services.AddControllers();
-// Swagger arayüzü (JWT "Authorize" butonu ile)
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo
-    {
-        Title = "MediTrack API",
-        Version = "v1"
-    });
 
-    // Swagger'da "Authorize" butonu çıkarır, JWT token'ı buraya yapıştırılır
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
-        In = ParameterLocation.Header,
-        Description = "Login'den aldığınız token'ı yapıştırın (başına 'Bearer' yazmayın)"
-    });
+// ================= OPENAPWT "Authorize" butonu (ayrıntılar: Extensions/OpenApiExtensions.cs)
+builder.Services.AddOpenApiWithJwt();
+// ================= AUTHENTICATION (JWT) =================
+// Token doğrulama kuralları + 401/403 mesajları (ayrıntılar: Extensions/AuthenticationExtensions.cs)
+builder.Services.AddJwtAuthentication(builder.Configuration);
 
-    // Token'ı tüm isteklere otomatik ekler
-    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
-    {
-        [new OpenApiSecuritySchemeReference("Bearer", document)] = []
-    });
-});
-
-// SQL Server bağlantısı
+// SQL Server bağlantısıI + SWAGGER =================
+// API dokümanı + Swagger'daki J
 builder.Services.AddDbContext<MediTrackDbContext>(
     options => options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
@@ -85,56 +67,7 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     // Şu an kullanmıyoruz, ama ileride "şifremi unuttum" eklenirse hazır olur.
     .AddDefaultTokenProviders();
 
-// ================= AUTHENTICATION (JWT) =================
-builder.Services.AddAuthentication(options =>
-{
-    // Bir istek geldiğinde kimliği varsayılan olarak JWT ile kontrol et.
-    // JwtBearerDefaults.AuthenticationScheme aslında sadece "Bearer" yazısıdır.
-    // Bu ayar sayesinde [AllowAnonymous] endpoint'lerde de (ör. register-patient)
-    // token gönderilmişse User dolu gelir.
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
 
-    // Kimliği doğrulanmamış bir kişi korumalı bir endpoint'e girmeye çalışırsa JWT usulüyle tepki ver.
-    // Bu satır sayesinde doğrudan 401 Unauthorized döner.
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-    // JWT doğrulama yöntemini sisteme ekler ve token'ın nasıl kontrol edileceğini tanımlar.
-    // Gelen token'ın geçerli sayılabilmesi için kontrol listesi:
-    .AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters
-    {
-        // Token'ı kimin ürettiğini kontrol et (Issuer = token veren taraf, yani bizim API).
-        // Başka bir sistemin ürettiği token'ı kabul etmemek için.
-        ValidateIssuer = true,
-
-        // Token'ın kimin için üretildiğini kontrol et (Audience = token'ı kullanacak taraf, yani client).
-        // Başka bir uygulama için üretilmiş token'ın burada kullanılmasını engeller.
-        ValidateAudience = true,
-
-        // Token'ın süresi dolmuş mu kontrol et.
-        // Süresi geçmiş token reddedilir, böylece çalınsa bile sonsuza kadar kullanılamaz.
-        ValidateLifetime = true,
-
-        // YENİ: Varsayılan olarak token, süresi dolduktan sonra 5 dakika daha geçerli sayılır
-        // (sunucu saatleri arasındaki küçük farkları tolere etmek için).
-        // Tek sunucu olduğu için bu toleransa gerek yok; süre dolunca token hemen reddedilsin.
-        ClockSkew = TimeSpan.Zero,
-
-        // Token'ın imzasını kontrol et (en önemli kontrol).
-        // Biri token'ın içini değiştirirse (örn. rolü Admin yaparsa) imza tutmaz ve token reddedilir.
-        ValidateIssuerSigningKey = true,
-
-        // Beklenen issuer değeri: appsettings.json'daki "Jwt:Issuer".
-        ValidIssuer = builder.Configuration["Jwt:Issuer"],
-
-        // Beklenen audience değeri: appsettings.json'daki "Jwt:Audience".
-        ValidAudience = builder.Configuration["Jwt:Audience"],
-
-        // İmzayı kontrol ederken kullanılacak gizli anahtar.
-        // SymmetricSecurityKey -> aynı anahtar hem imzalamada (login) hem doğrulamada (burada) kullanılır.
-        // Bu yüzden login'de token üretirken de AYNI Jwt:Key kullanılmalıdır.
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
-    });
 
 // ================= AUTHORIZATION =================
 // YENİ: Varsayılan politika.
@@ -163,6 +96,7 @@ builder.Services.AddScoped<IDoctorService, DoctorService>();
 builder.Services.AddScoped<IFamilyDoctorService, FamilyDoctorService>();
 builder.Services.AddScoped<IMedicationService, MedicationService>();
 builder.Services.AddScoped<IPatientService, PatientService>();
+
 
 // builder servislerden sonra app'i oluşturur, app ise middleware'leri çalıştırır
 var app = builder.Build();
@@ -202,10 +136,19 @@ using (var scope = app.Services.CreateScope())
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "MediTrack API v1");
+    //AllowAnonymous şart
+
+    app.MapOpenApi().AllowAnonymous();
+
+    //yeni swagger arayüzü middleware de olduğu ve useauthroizationdan önce olduğu için giriş gerektirmiyor
+    // Sadece Development'ta açık; canlı ortamda API dokümanı dışarıya gösterilmez.
+
+    app.UseSwaggerUI(options => {
+        options.SwaggerEndpoint("/openapi/v1.json", "MediTrack API v1");
+        // Authorize'a girilen token'ı tarayıcıda (localStorage) sakla:
+        // sayfa yenilense ya da uygulama yeniden başlatılsa da tekrar girmek gerekmez.
+        options.EnablePersistAuthorization();
+
     });
 }
 
